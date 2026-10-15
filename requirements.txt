@@ -1,0 +1,10 @@
+numpy
+pandas
+matplotlib
+scikit-learn
+torch
+torchvision
+pillow
+PySide6
+PyInstaller
+liboqs-python
