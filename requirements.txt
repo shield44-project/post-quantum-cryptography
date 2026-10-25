@@ -1,0 +1,48 @@
+# requirements.txt - Post-Quantum AI Provenance Watermarking
+# Covers Phase 0 and Phase 1 (v1, 2026-10-25)
+#
+# LOCAL SETUP (WSL Ubuntu, venv active), in this order:
+#
+#   1. Install PyTorch CPU build first (small download):
+#        pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+#
+#   2. Install the rest:
+#        pip install -r requirements.txt
+#      (torch and torchvision below will already be satisfied by step 1.)
+#
+#   3. Install liboqs-python (ML-DSA). It is NOT installed by this file.
+#      It needs these system packages first:
+#        sudo apt install -y git cmake ninja-build build-essential libssl-dev
+#      Then, with the venv active:
+#        cd ~
+#        git clone --depth=1 https://github.com/open-quantum-safe/liboqs-python
+#        cd liboqs-python
+#        pip install .
+#      Check it works:
+#        python tests/test_mldsa.py
+#
+# COLAB: torch, torchvision, numpy, pandas, matplotlib and tqdm are
+# preinstalled. Do NOT run pip install -r on Colab, and do not reinstall torch.
+#
+# To record the exact versions you actually use (recommended), run:
+#   pip freeze > requirements-lock.txt
+
+# Deep learning (Phase 1 onward)
+torch>=2.0
+torchvision>=0.15
+
+# Numerics and data handling
+numpy>=1.24
+scipy>=1.10
+pandas>=2.0
+
+# Plotting and progress bars
+matplotlib>=3.7
+tqdm>=4.65
+
+# Testing (Phase 2 onward)
+pytest>=7.0
+
+# Planned, not needed yet (Phase 4, error-correcting codes). Uncomment when we get there:
+# reedsolo
+# galois
