@@ -1,0 +1,17 @@
+{
+  "seed": 2,
+  "test_acc": 0.8378,
+  "params": 160234,
+  "train_seconds": 592,
+  "torch_version": "2.11.0+cu130",
+  "device": "cuda",
+  "config": {
+    "seed": 2,
+    "epochs": 30,
+    "width": 32,
+    "batch_size": 128,
+    "lr": 0.05,
+    "weight_decay": 0.0005,
+    "out_dir": "runs/baseline"
+  }
+}
