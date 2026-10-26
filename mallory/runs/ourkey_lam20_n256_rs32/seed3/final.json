@@ -1,0 +1,22 @@
+{
+  "seed": 3,
+  "epochs": 30,
+  "lam": 20.0,
+  "n_bits": 256,
+  "ecc": "rs32",
+  "codeword_bits": 512,
+  "layer": "features.6.0.weight",
+  "mode": "mean",
+  "width": 32,
+  "num_params": 160234,
+  "final_test_acc": 0.8249,
+  "bit_errors": 0,
+  "ber": 0.0,
+  "decoded_ok": true,
+  "decoded_errors": 0,
+  "min_abs_logit": 1.5859580039978027,
+  "payload_bits": "0111110100000001000001110100011000000010110110101010100001100110110100010111111011111110001011110011110000010000001000101010011101011110111010100010111001011011011111000100111101011100010101111101111010000011101011001001010000000111010011011001100001110111",
+  "key_fingerprint": "81b57c4b28884f01",
+  "seconds": 583.2159025669098,
+  "NOTE": "Trained on Colab 2026-10-26 with Mallory's payload but OUR watermark key (fingerprint 81b57c4b28884f01, wrong file picked at upload). Kept as an extra negative case: insider who knows our key embeds a different payload."
+}
