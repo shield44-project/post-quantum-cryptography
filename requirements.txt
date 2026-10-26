@@ -1,5 +1,7 @@
 # requirements.txt - Post-Quantum AI Provenance Watermarking
-# Covers Phase 0 and Phase 1 (v1, 2026-10-25)
+# Covers Phases 0 to 5 (v2, 2026-10-26)
+# Native Windows (liboqs built with Visual Studio Build Tools): see docs/phase_commands.md,
+# section "Setup: liboqs on native Windows".
 #
 # LOCAL SETUP (WSL Ubuntu, venv active), in this order:
 #
@@ -43,6 +45,5 @@ tqdm>=4.65
 # Testing (Phase 2 onward)
 pytest>=7.0
 
-# Planned, not needed yet (Phase 4, error-correcting codes). Uncomment when we get there:
-# reedsolo
-# galois
+# Error-correcting codes (Phase 4): Reed-Solomon, pure Python
+reedsolo>=1.7
