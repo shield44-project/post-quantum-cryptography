@@ -106,6 +106,11 @@
 | Phase 4 rs16, seeds 0-2, real Mallory | 24 | all correct, right reason, PASSED |
 | insider: our watermark key + Mallory's payload | 1 | REJECTED (116/256 bits differ) |
 
+Accuracy cost of watermark
+0 {'final_test_acc': 0.8308, 'bit_errors': 0, 'ber': 0.0, 'decoded_errors': 0}
+1 {'final_test_acc': 0.8033, 'bit_errors': 0, 'ber': 0.0, 'decoded_errors': 0}
+2 {'final_test_acc': 0.8252, 'bit_errors': 0, 'ber': 0.0, 'decoded_errors': 0}
+
 - Done-when (wrong key, tampered manifest, unmarked model and someone else's model rejected; own model
   passes): **MET**.
 - tests: phases 2-5, 26 passed (Windows, liboqs 0.16.0 built natively).
