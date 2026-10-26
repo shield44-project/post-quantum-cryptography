@@ -4,6 +4,8 @@ Every command and every piece of code used in a phase, in the order it was run.
 "Local" means the project root on the developer machine with the venv active;
 "Colab" means a notebook cell with the project folder in Drive as working directory.
 
+To re-check the finished work on another machine (Linux or Windows), follow `docs/HOW_TO_CHECK.md`.
+
 ---
 
 ## Setup: liboqs on native Windows (done 2026-10-26)
