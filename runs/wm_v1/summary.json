@@ -1,0 +1,207 @@
+{
+  "rep2/features.6.0/lam20": {
+    "mean_paired_diff": -0.042049999999999976,
+    "mean_wm_acc": 0.81515,
+    "min_abs_logit": 1.8447818756103516,
+    "n_bits": 256,
+    "rows": [
+      {
+        "base_acc": 0.8612,
+        "decoded_errors": 0,
+        "diff": -0.03610000000000002,
+        "min_abs_logit": 1.8467402458190918,
+        "raw_bit_errors": 0,
+        "seed": 0,
+        "wm_acc": 0.8251
+      },
+      {
+        "base_acc": 0.8532,
+        "decoded_errors": 0,
+        "diff": -0.04799999999999993,
+        "min_abs_logit": 1.8447818756103516,
+        "raw_bit_errors": 0,
+        "seed": 1,
+        "wm_acc": 0.8052
+      }
+    ],
+    "std_paired_diff": 0.008414570696119852,
+    "total_decoded_errors": 0,
+    "total_raw_bit_errors": 0
+  },
+  "rs16/features.6.0/lam20": {
+    "mean_paired_diff": -0.028099999999999976,
+    "mean_wm_acc": 0.8226333333333333,
+    "min_abs_logit": 2.701470375061035,
+    "n_bits": 256,
+    "rows": [
+      {
+        "base_acc": 0.8612,
+        "decoded_errors": 0,
+        "diff": -0.0403,
+        "min_abs_logit": 2.701470375061035,
+        "raw_bit_errors": 0,
+        "seed": 0,
+        "wm_acc": 0.8209
+      },
+      {
+        "base_acc": 0.8532,
+        "decoded_errors": 0,
+        "diff": -0.04569999999999996,
+        "min_abs_logit": 2.7145843505859375,
+        "raw_bit_errors": 0,
+        "seed": 1,
+        "wm_acc": 0.8075
+      },
+      {
+        "base_acc": 0.8378,
+        "decoded_errors": 0,
+        "diff": 0.0017000000000000348,
+        "min_abs_logit": 2.7110555171966553,
+        "raw_bit_errors": 0,
+        "seed": 2,
+        "wm_acc": 0.8395
+      }
+    ],
+    "std_paired_diff": 0.02594841035593511,
+    "total_decoded_errors": 0,
+    "total_raw_bit_errors": 0
+  },
+  "rs32/features.4.0/lam1": {
+    "mean_paired_diff": -0.02200000000000002,
+    "mean_wm_acc": 0.8392,
+    "min_abs_logit": 0.003086686134338379,
+    "n_bits": 256,
+    "rows": [
+      {
+        "base_acc": 0.8612,
+        "decoded_errors": 0,
+        "diff": -0.02200000000000002,
+        "min_abs_logit": 0.003086686134338379,
+        "raw_bit_errors": 1,
+        "seed": 0,
+        "wm_acc": 0.8392
+      }
+    ],
+    "std_paired_diff": null,
+    "total_decoded_errors": 0,
+    "total_raw_bit_errors": 1
+  },
+  "rs32/features.4.0/lam20": {
+    "mean_paired_diff": -0.0665,
+    "mean_wm_acc": 0.7947,
+    "min_abs_logit": 2.3088133335113525,
+    "n_bits": 256,
+    "rows": [
+      {
+        "base_acc": 0.8612,
+        "decoded_errors": 0,
+        "diff": -0.0665,
+        "min_abs_logit": 2.3088133335113525,
+        "raw_bit_errors": 0,
+        "seed": 0,
+        "wm_acc": 0.7947
+      }
+    ],
+    "std_paired_diff": null,
+    "total_decoded_errors": 0,
+    "total_raw_bit_errors": 0
+  },
+  "rs32/features.4.0/lam5": {
+    "mean_paired_diff": -0.0413,
+    "mean_wm_acc": 0.8199,
+    "min_abs_logit": 1.1501023769378662,
+    "n_bits": 256,
+    "rows": [
+      {
+        "base_acc": 0.8612,
+        "decoded_errors": 0,
+        "diff": -0.0413,
+        "min_abs_logit": 1.1501023769378662,
+        "raw_bit_errors": 0,
+        "seed": 0,
+        "wm_acc": 0.8199
+      }
+    ],
+    "std_paired_diff": null,
+    "total_decoded_errors": 0,
+    "total_raw_bit_errors": 0
+  },
+  "rs32/features.6.0/lam1": {
+    "mean_paired_diff": -0.014499999999999957,
+    "mean_wm_acc": 0.8467,
+    "min_abs_logit": 0.015195250511169434,
+    "n_bits": 256,
+    "rows": [
+      {
+        "base_acc": 0.8612,
+        "decoded_errors": 0,
+        "diff": -0.014499999999999957,
+        "min_abs_logit": 0.015195250511169434,
+        "raw_bit_errors": 1,
+        "seed": 0,
+        "wm_acc": 0.8467
+      }
+    ],
+    "std_paired_diff": null,
+    "total_decoded_errors": 0,
+    "total_raw_bit_errors": 1
+  },
+  "rs32/features.6.0/lam20": {
+    "mean_paired_diff": -0.030966666666666625,
+    "mean_wm_acc": 0.8197666666666666,
+    "min_abs_logit": 2.2405574321746826,
+    "n_bits": 256,
+    "rows": [
+      {
+        "base_acc": 0.8612,
+        "decoded_errors": 0,
+        "diff": -0.030399999999999983,
+        "min_abs_logit": 2.2482352256774902,
+        "raw_bit_errors": 0,
+        "seed": 0,
+        "wm_acc": 0.8308
+      },
+      {
+        "base_acc": 0.8532,
+        "decoded_errors": 0,
+        "diff": -0.049899999999999944,
+        "min_abs_logit": 2.243435859680176,
+        "raw_bit_errors": 0,
+        "seed": 1,
+        "wm_acc": 0.8033
+      },
+      {
+        "base_acc": 0.8378,
+        "decoded_errors": 0,
+        "diff": -0.012599999999999945,
+        "min_abs_logit": 2.2405574321746826,
+        "raw_bit_errors": 0,
+        "seed": 2,
+        "wm_acc": 0.8252
+      }
+    ],
+    "std_paired_diff": 0.018656455540464627,
+    "total_decoded_errors": 0,
+    "total_raw_bit_errors": 0
+  },
+  "rs32/features.6.0/lam5": {
+    "mean_paired_diff": -0.029299999999999993,
+    "mean_wm_acc": 0.8319,
+    "min_abs_logit": 1.210929036140442,
+    "n_bits": 256,
+    "rows": [
+      {
+        "base_acc": 0.8612,
+        "decoded_errors": 0,
+        "diff": -0.029299999999999993,
+        "min_abs_logit": 1.210929036140442,
+        "raw_bit_errors": 0,
+        "seed": 0,
+        "wm_acc": 0.8319
+      }
+    ],
+    "std_paired_diff": null,
+    "total_decoded_errors": 0,
+    "total_raw_bit_errors": 0
+  }
+}
