@@ -2,6 +2,7 @@ venv/
 __pycache__/
 data/
 keys/
+mallory/keys/
 .ipynb_checkpoints/
 .env
 .env.*
