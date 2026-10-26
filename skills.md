@@ -217,6 +217,17 @@ All Phase 2 work runs locally (CPU). Planned files:
 Notes: ML-DSA signing is typically randomized, so two signatures of the same message differ but both verify. Each re-run of the release script produces a new timestamp and therefore a new payload, so finalize the manifest before Phase 3 training. Back up `keys/secret_key.bin` privately; never commit it.
 
 ---
+## Phase 2 (date)
+- Merkle root: <64 hex>   key id: <32 hex>   developer id: <name>   width: <32|64>
+- payload (256 bit): <64 hex>
+- pytest phase2: 5 passed | tamper demo: PASSED
+
+## Phase 3 (date)
+- layer features.6.0.weight, mode mean, carrier dim 576, n_bits 32 (prefix of payload), lambda <L>
+- seeds 0/1/2 final test acc: <a0>/<a1>/<a2>  paired diff vs baseline: <d0>/<d1>/<d2>  mean <m> +/- <s>
+- bit errors at final epoch: <0/0/0>   min|logit|: <x/y/z>
+- wrong-key BER (50 keys): <min/mean/max>   unmarked-baseline BER: <b>
+- notes / problems:
 
 ## 11. Open items and UNCONFIRMED facts
 
