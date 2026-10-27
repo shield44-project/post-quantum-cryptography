@@ -1,0 +1,17 @@
+{
+  "source": "wm",
+  "seed": 1,
+  "attack_id": "prune_layer_0.7",
+  "family": "prune_layer",
+  "params": {
+    "sparsity": 0.7,
+    "scope": "layer"
+  },
+  "rep": 0,
+  "clean_acc": 0.8033,
+  "attacked_acc": 0.5933,
+  "acc_drop": 0.20999999999999996,
+  "layer": "features.6.0.weight",
+  "seconds": 20.398775100708008,
+  "measured_sparsity": 0.6999824543813916
+}

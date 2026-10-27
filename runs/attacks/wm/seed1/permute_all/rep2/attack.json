@@ -1,0 +1,15 @@
+{
+  "source": "wm",
+  "seed": 1,
+  "attack_id": "permute_all",
+  "family": "permute",
+  "params": {
+    "which": "all"
+  },
+  "rep": 2,
+  "clean_acc": 0.8033,
+  "attacked_acc": 0.8033,
+  "acc_drop": 0.0,
+  "layer": "features.6.0.weight",
+  "seconds": 22.28194499015808
+}

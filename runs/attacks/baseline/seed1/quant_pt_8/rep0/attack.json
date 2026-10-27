@@ -1,0 +1,16 @@
+{
+  "source": "baseline",
+  "seed": 1,
+  "attack_id": "quant_pt_8",
+  "family": "quantize",
+  "params": {
+    "kind": "per_tensor",
+    "bits": 8
+  },
+  "rep": 0,
+  "clean_acc": 0.8532,
+  "attacked_acc": 0.8531,
+  "acc_drop": 9.999999999998899e-05,
+  "layer": "features.6.0.weight",
+  "seconds": 23.959486961364746
+}

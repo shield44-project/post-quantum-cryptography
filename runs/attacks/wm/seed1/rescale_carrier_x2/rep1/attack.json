@@ -1,0 +1,16 @@
+{
+  "source": "wm",
+  "seed": 1,
+  "attack_id": "rescale_carrier_x2",
+  "family": "rescale",
+  "params": {
+    "max_scale": 2,
+    "scope": "carrier"
+  },
+  "rep": 1,
+  "clean_acc": 0.8033,
+  "attacked_acc": 0.8032,
+  "acc_drop": 9.999999999998899e-05,
+  "layer": "features.6.0.weight",
+  "seconds": 21.255082845687866
+}

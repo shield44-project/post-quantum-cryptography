@@ -1,0 +1,16 @@
+{
+  "source": "wm",
+  "seed": 2,
+  "attack_id": "quant_pc_4",
+  "family": "quantize",
+  "params": {
+    "kind": "per_channel",
+    "bits": 4
+  },
+  "rep": 0,
+  "clean_acc": 0.8252,
+  "attacked_acc": 0.7824,
+  "acc_drop": 0.04280000000000006,
+  "layer": "features.6.0.weight",
+  "seconds": 23.627357244491577
+}

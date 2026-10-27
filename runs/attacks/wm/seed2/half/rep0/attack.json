@@ -1,0 +1,15 @@
+{
+  "source": "wm",
+  "seed": 2,
+  "attack_id": "half",
+  "family": "quantize",
+  "params": {
+    "kind": "half"
+  },
+  "rep": 0,
+  "clean_acc": 0.8252,
+  "attacked_acc": 0.8257,
+  "acc_drop": -0.0004999999999999449,
+  "layer": "features.6.0.weight",
+  "seconds": 22.792426347732544
+}

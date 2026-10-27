@@ -1,0 +1,13 @@
+{
+  "source": "wm",
+  "seed": 2,
+  "attack_id": "none",
+  "family": "control",
+  "params": {},
+  "rep": 0,
+  "clean_acc": 0.8252,
+  "attacked_acc": 0.8252,
+  "acc_drop": 0.0,
+  "layer": "features.6.0.weight",
+  "seconds": 21.169091939926147
+}

@@ -1,0 +1,16 @@
+{
+  "source": "wm",
+  "seed": 0,
+  "attack_id": "noise_all_s0.1",
+  "family": "noise",
+  "params": {
+    "sigma": 0.1,
+    "scope": "all"
+  },
+  "rep": 0,
+  "clean_acc": 0.8308,
+  "attacked_acc": 0.7938,
+  "acc_drop": 0.03700000000000003,
+  "layer": "features.6.0.weight",
+  "seconds": 24.356878519058228
+}

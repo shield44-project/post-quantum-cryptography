@@ -1,0 +1,13 @@
+{
+  "source": "baseline",
+  "seed": 2,
+  "attack_id": "none",
+  "family": "control",
+  "params": {},
+  "rep": 0,
+  "clean_acc": 0.8378,
+  "attacked_acc": 0.8378,
+  "acc_drop": 0.0,
+  "layer": "features.6.0.weight",
+  "seconds": 24.3943932056427
+}
