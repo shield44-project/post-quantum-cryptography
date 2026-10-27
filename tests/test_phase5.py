@@ -1,4 +1,4 @@
-"""Run from the project root:  python -m pytest tests/test_phase5.py -v   (expect 8 passed)
+"""Run from the project root:  python -m pytest tests/test_phase5.py -v   (expect 11 passed)
 
 Self-contained: temporary ML-DSA keys, releases and small watermarked models; nothing in keys/,
 release/ or runs/ is used or changed.
@@ -52,7 +52,8 @@ def make_developer(root, name, width, ecc, n_bits, marked=True):
     torch.save(model.state_dict(), root / "model" / "model.pt")
     (root / "model" / "final.json").write_text(json.dumps({"ecc": ecc, "n_bits": n_bits, "layer": LAYER, "mode": "mean"}))
     return dict(model_path=root / "model" / "model.pt", public_key_path=root / "public_key.bin",
-                wm_key_path=root / "watermark_key.bin", release_dir=root / "release")
+                wm_key_path=root / "watermark_key.bin", release_dir=root / "release",
+                allow_short=n_bits < 256)                    # 32-bit test models are "legacy"
 
 
 @pytest.fixture(scope="module")
@@ -128,3 +129,29 @@ def test_garbage_inputs_never_crash(world):
     for files in cases:
         ok, checks, _ = verify_model(**files)
         assert not ok and first_failure(checks) is not None, files
+
+
+SHORT = "embedded payload covers the whole signed payload"
+
+
+def test_short_payload_rejected_unless_allowed(world):
+    dev = world["dev"]                                                   # 32-bit model, 256-bit manifest
+    ok, checks, _ = verify_model(**dict(dev, allow_short=False))
+    assert not ok and first_failure(checks) == SHORT
+    ok, checks, s = verify_model(**dev)                                  # allow_short=True (legacy)
+    assert ok and s["warning"].startswith("only 32 of 256")
+
+
+def test_forger_cannot_shrink_the_payload(world):
+    for n in (1, 8, 32):                                                 # the H1 attack: ask for few bits
+        ok, checks, _ = verify_model(**dict(world["unmarked"], n_bits=n, allow_short=False))
+        assert not ok and first_failure(checks) == SHORT, n
+
+
+def test_default_n_bits_is_the_signed_payload(world):
+    d = world["t"] / "no_final_json"
+    d.mkdir()
+    shutil.copy(world["rs"]["model_path"], d / "model.pt")               # no final.json next to the copy
+    ok, checks, s = verify_model(**dict(world["rs"], model_path=d / "model.pt", ecc="rs32"))
+    assert ok, checks
+    assert s["n_bits"] == 256 and "defaults" in s["source"] and "warning" not in s

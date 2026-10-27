@@ -2453,3 +2453,407 @@ index efbabbb..b129cce 100644
  .env
  .env.*
 ```
+
+---
+
+## Phase 4-5 fix: the verifier must check the whole signed payload (H1)
+
+Branch `fix-short-payload`, made from `phase6` (2026-10-27). Phase 6 results are not affected: every
+attacked model there was verified with `n_bits 256`.
+
+**The flaw.** `verify_model` accepted any `1 <= n_bits <= payload_bits`, and `n_bits` comes from the
+command line or the **unsigned** `final.json` next to the model (default 32). Step 4 then compared only the
+first `n_bits` bits of SHA-256(signed manifest). ecc, layer, mode and the watermark key are not signed either,
+so a forger could make an unrelated or unmarked model pass by retrying: about 50% per try at `n_bits 1`,
+1 in 256 at `n_bits 8`, and at the default 32 bits a search over about 4 billion watermark keys. The
+"chance of a random pass" claims only hold when all 256 signed bits are required.
+
+**The fix, in order (5 steps).**
+1. `verify/verify_model.py` (done, F1): `n_bits` must equal the signed `payload_bits`; the default
+   comes from the manifest instead of 32; `--allow-short` / `allow_short=True` accepts fewer bits for legacy
+   models and prints a `WARNING` line just before the verdict.
+2. `experiments/phase5_negative_cases.py` (done, F2): pass `--allow-short` through, default to the Phase 4 models.
+3. `tests/test_phase5.py` (done, F3): 32-bit test models get `allow_short=True`, plus 3 new tests.
+4. Docs (done, F4): `docs/HOW_TO_CHECK.md` Phase 3 commands, `docs/results_log.md`.
+5. Final check (done, F5): all test suites, verifier and negative cases on Phase 3/4 models, Phase 6
+   `check_compat`. Commit not made yet (waiting for the go-ahead).
+
+### F1: `verify/verify_model.py` requires the full payload (local)
+
+**Commands** (Windows, venv, liboqs 0.16.0)
+
+```bash
+git fetch origin
+git switch -c fix-short-payload origin/phase6
+git branch --unset-upstream          # so a plain `git push` cannot go to phase6
+
+# A/B) Phase 4 models, no flags: must still pass
+python -m verify.verify_model --model runs/wm_v1/lam20_n256_rs32/seed0/model.pt
+python -m verify.verify_model --model runs/wm_v1/lam20_n256_rs16/seed0/model.pt
+# C) Phase 3 model (no final.json), no flags: now checked at 256 bits, must fail
+python -m verify.verify_model --model runs/wm_v0/lam1_n32/seed0/model.pt
+# D) Phase 3 model asking for 32 bits without the flag: must fail at the new check
+python -m verify.verify_model --model runs/wm_v0/lam1_n32/seed0/model.pt --n-bits 32
+# E) Phase 3 model, legacy mode: passes, with a WARNING line
+python -m verify.verify_model --model runs/wm_v0/lam1_n32/seed0/model.pt --n-bits 32 --allow-short
+# F) the forger's trick: unmarked model, 1 bit: must fail
+python -m verify.verify_model --model runs/baseline/seed0/model.pt --n-bits 1
+
+python -m pytest tests/test_phase5.py tests/test_phase6_logic.py -q
+```
+
+**Output**
+
+```
+A) rs32: ... PASS  watermark read (ecc rs32, 512 values)  (min margin 2.25, corrected 0, erasures 0)
+         PASS  extracted payload == SHA-256(signed manifest)  (256 bits match)
+         VERIFIED                                                              exit 0
+B) rs16: PASS  watermark read (ecc rs16, 384 values)  (min margin 2.70, corrected 0, erasures 0)
+         PASS  extracted payload == SHA-256(signed manifest)  (256 bits match)
+         VERIFIED                                                              exit 0
+C) Phase 3, no flags:
+         PASS  watermark read (ecc none, 256 values)  (min margin 0.00, corrected 0, erasures 0)
+         FAIL  extracted payload == SHA-256(signed manifest)  (134 of 256 bits differ)
+         REJECTED                                                              exit 1
+D) Phase 3, --n-bits 32:
+         FAIL  embedded payload covers the whole signed payload  (settings say 32 bits, the signed manifest has 256 (--allow-short is for legacy models only))
+         REJECTED                                                              exit 1
+E) Phase 3, --n-bits 32 --allow-short:
+         PASS  watermark read (ecc none, 32 values)  (min margin 3.60, corrected 0, erasures 0)
+         PASS  extracted payload == SHA-256(signed manifest)  (32 bits match)
+         WARNING  only 32 of 256 signed payload bits checked (--allow-short), weaker proof
+         VERIFIED                                                              exit 0
+F) baseline, --n-bits 1:
+         FAIL  embedded payload covers the whole signed payload  (settings say 1 bits, the signed manifest has 256 (--allow-short is for legacy models only))
+         REJECTED                                                              exit 1
+
+pytest: 4 failed, 9 passed
+  FAILED test_own_model_verified, test_wrong_watermark_key_rejected,
+         test_unmarked_model_rejected, test_someone_elses_model
+```
+
+The 4 failures are expected at this step: those tests use 32-bit models against a 256-bit manifest, which
+the fix now rejects. Step 3 gives them `allow_short=True`. The Phase 6 parser tests pass (the verdict is
+still the last line).
+
+**Change: `verify/verify_model.py`**
+
+```diff
+@@ docstring @@
+-    python -m verify.verify_model --model runs/wm_v0/lam1_n32/seed0/model.pt \
++    python -m verify.verify_model --model runs/wm_v1/lam20_n256_rs32/seed0/model.pt \
+         --public-key keys/public_key.bin --wm-key keys/watermark_key.bin --release-dir release
++    # legacy Phase 3 models (32 of the 256 signed bits, weaker proof):
++    python -m verify.verify_model --model runs/wm_v0/lam1_n32/seed0/model.pt --n-bits 32 --allow-short
+ ...
+-  3. watermark : X @ v with the watermark key, then ECC decode
+-  4. payload   : decoded bits == first n_bits of SHA-256(signed manifest)
++  3. watermark : n_bits == signed payload_bits, X @ v with the watermark key, then ECC decode
++  4. payload   : decoded bits == SHA-256(signed manifest), all payload_bits of it
+ ...
+-next to the model, else the Phase 3 defaults; the source is printed.
++next to the model, else the defaults (n_bits default = the signed payload_bits); the source is printed.
++Because they are unsigned, n_bits must equal the signed payload_bits: with fewer bits a forger can
++retry keys/layers until an unrelated model passes. --allow-short accepts fewer (legacy models only)
++and prints a WARNING line before the verdict.
+
+-DEFAULTS = {"ecc": "none", "n_bits": 32, "layer": "features.6.0.weight", "mode": "mean"}
++DEFAULTS = {"ecc": "none", "n_bits": None, "layer": "features.6.0.weight", "mode": "mean"}  # None = signed payload_bits
+
+ def verify_model(model_path, public_key_path, wm_key_path, release_dir,
+-                 ecc=None, n_bits=None, layer=None, mode=None):
+-    """Return (ok, checks, settings). checks = list of (name, passed, detail)."""
++                 ecc=None, n_bits=None, layer=None, mode=None, allow_short=False):
++    """Return (ok, checks, settings). checks = list of (name, passed, detail).
++    allow_short=True accepts n_bits < signed payload_bits (legacy models); settings["warning"] then says so."""
+
+@@ 3. watermark @@
+-        if not 1 <= int(settings["n_bits"]) <= manifest["watermark"]["payload_bits"]:
+-            add("n_bits within signed payload size", False,
+-                "%s requested, manifest has %d" % (settings["n_bits"], manifest["watermark"]["payload_bits"]))
++        signed_bits = int(manifest["watermark"]["payload_bits"])
++        if settings["n_bits"] is None:
++            settings["n_bits"] = signed_bits
++        n_req = int(settings["n_bits"])
++        if not 1 <= n_req <= signed_bits or (n_req < signed_bits and not allow_short):
++            add("embedded payload covers the whole signed payload", False,
++                "settings say %d bits, the signed manifest has %d (--allow-short is for legacy models only)"
++                % (n_req, signed_bits))
+             return False, checks, settings
+-        code = get_code(settings["ecc"], int(settings["n_bits"]))
++        if n_req < signed_bits:
++            settings["warning"] = ("only %d of %d signed payload bits checked (--allow-short), weaker proof"
++                                   % (n_req, signed_bits))
++        code = get_code(settings["ecc"], n_req)
+
+@@ 4. payload @@
+-    expected = payload_bits(manifest, int(settings["n_bits"]))
++    expected = payload_bits(manifest, n_req)
++    if len(d["bits"]) != len(expected):              # zip() below would silently compare only the overlap
++        add("extracted payload length", False, "%d bits read, %d expected" % (len(d["bits"]), len(expected)))
++        return False, checks, settings
+     wrong = sum(int(a != b) for a, b in zip(d["bits"], expected))
+
+@@ main() @@
+     ap.add_argument("--mode", default=None)
++    ap.add_argument("--allow-short", action="store_true",
++                    help="accept legacy models that embed fewer bits than the manifest signs (weaker proof)")
+     args = ap.parse_args()
+
+     ok, checks, s = verify_model(args.model, args.public_key, args.wm_key, args.release_dir,
+-                                 args.ecc, args.n_bits, args.layer, args.mode)
++                                 args.ecc, args.n_bits, args.layer, args.mode, allow_short=args.allow_short)
+ ...
++    if s.get("warning"):
++        print("WARNING  " + s["warning"])              # before the verdict: attacks/measure.py reads the last line
+     print("VERIFIED" if ok else "REJECTED")
+```
+
+**Usage change for legacy (Phase 3) models:** they have no `final.json`, so the default is now 256 bits and
+they fail. Check them with `--n-bits 32 --allow-short`. Asking for fewer bits is always explicit.
+
+### F2: negative-case suite, `--allow-short` and Phase 4 defaults (local)
+
+**What changes in `experiments/phase5_negative_cases.py`:** a `--allow-short` flag passed to every
+`verify_model` call; the default models are now the Phase 4 ones (our `runs/wm_v1/lam20_n256_rs32`, Mallory's
+`mallory/runs/lam20_n256_rs32/seed3`), so running it with no options checks full 256-bit payloads.
+Legacy Phase 3 runs need `--n-bits 32 --allow-short` and the 32-bit Mallory stand-in.
+
+**Commands**
+
+```bash
+# A) defaults: Phase 4 rs32 + Mallory's 256-bit model
+python -m experiments.phase5_negative_cases --seeds 0 1 2
+# B) Phase 4 rs16
+python -m experiments.phase5_negative_cases --seeds 0 1 2 --model-pattern "runs/wm_v1/lam20_n256_rs16/seed{seed}/model.pt"
+# C) Phase 3 legacy WITHOUT the flag: must FAIL (shows the fix is active)
+python -m experiments.phase5_negative_cases --seeds 0 --model-pattern "runs/wm_v0/lam1_n32/seed{seed}/model.pt" \
+    --mallory-model mallory/runs/standin_lam5_n32/seed1/model.pt
+# D) Phase 3 legacy with the flag
+python -m experiments.phase5_negative_cases --seeds 0 1 2 --n-bits 32 --allow-short \
+    --model-pattern "runs/wm_v0/lam1_n32/seed{seed}/model.pt" --mallory-model mallory/runs/standin_lam5_n32/seed1/model.pt
+```
+
+**Output**
+
+```
+A) seed 0 (seeds 1 and 2 identical)
+ case                               | expected | got      | first failing check            | right reason
+ own model + own files              | VERIFIED | VERIFIED | -                              | yes
+ wrong public key                   | REJECTED | REJECTED | key id matches manifest        | yes
+ wrong watermark key                | REJECTED | REJECTED | watermark read (ecc rs32, 512  | yes
+ tampered manifest (developer_id)   | REJECTED | REJECTED | signature valid                | yes
+ unmarked baseline model            | REJECTED | REJECTED | watermark read (ecc rs32, 512  | yes
+ Mallory's model + OUR files        | REJECTED | REJECTED | watermark read (ecc rs32, 512  | yes
+ our model + MALLORY's files        | REJECTED | REJECTED | watermark read (ecc rs32, 512  | yes
+ Mallory's model + Mallory's files  | VERIFIED | VERIFIED | -                              | yes
+DONE-WHEN (4 negative cases rejected, own model passes): PASSED        exit 0
+
+B) DONE-WHEN ...: PASSED                                                exit 0
+
+C) seed 0
+ own model + own files              | VERIFIED | REJECTED | extracted payload == SHA-256(s | NO   (134 of 256 bits differ)
+ Mallory's model + OUR files        | REJECTED | REJECTED | embedded payload covers the wh | NO   (settings say 32 bits)
+ Mallory's model + Mallory's files  | VERIFIED | REJECTED | embedded payload covers the wh | NO   (settings say 32 bits)
+ (other 5 rows: yes)
+DONE-WHEN ...: FAILED                                                   exit 1
+
+D) NOTE: --allow-short is on, models embedding fewer bits than the manifest signs are accepted
+ seed 0: all 8 rows "yes" (wrong key 15/32, unmarked 13/32, Mallory+ours 16/32, ours+Mallory 19/32 bits differ)
+DONE-WHEN ...: PASSED                                                   exit 0
+```
+
+C failing is the point: without the flag a 32-bit model can no longer pass against a 256-bit manifest.
+
+**Change: `experiments/phase5_negative_cases.py`**
+
+```diff
+@@ docstring @@
+-    python -m experiments.phase5_negative_cases --seeds 0 1 2                    # Phase 3 models (now)
+-    python -m experiments.phase5_negative_cases --seeds 0 1 2 \
+-        --model-pattern "runs/wm_v1/<run name>/seed{seed}/model.pt" \
+-        --mallory-model mallory/runs/<run name>/seed0/model.pt                   # Phase 4 models (later)
++    python -m experiments.phase5_negative_cases --seeds 0 1 2                    # Phase 4 rs32 models (default)
++    python -m experiments.phase5_negative_cases --seeds 0 1 2 \
++        --model-pattern "runs/wm_v1/lam20_n256_rs16/seed{seed}/model.pt"         # another Phase 4 run
++    python -m experiments.phase5_negative_cases --seeds 0 1 2 --n-bits 32 --allow-short \
++        --model-pattern "runs/wm_v0/lam1_n32/seed{seed}/model.pt" \
++        --mallory-model mallory/runs/standin_lam5_n32/seed1/model.pt             # legacy 32-bit Phase 3 models
+
+@@ run_cases() @@
+         ok, checks, _ = verify_model(model, ecc=settings.get("ecc"), n_bits=settings.get("n_bits"),
+-                                     layer=settings.get("layer"), mode=settings.get("mode"), **files)
++                                     layer=settings.get("layer"), mode=settings.get("mode"),
++                                     allow_short=args.allow_short, **files)
+
+@@ main() @@
+-    ap.add_argument("--model-pattern", default="runs/wm_v0/lam1_n32/seed{seed}/model.pt")
++    ap.add_argument("--model-pattern", default="runs/wm_v1/lam20_n256_rs32/seed{seed}/model.pt")
+     ap.add_argument("--baseline-pattern", default="runs/baseline/seed{seed}/model.pt")
+     ap.add_argument("--mallory-dir", default="mallory")
+-    ap.add_argument("--mallory-model", default="mallory/runs/standin_lam5_n32/seed1/model.pt")
++    ap.add_argument("--mallory-model", default="mallory/runs/lam20_n256_rs32/seed3/model.pt")
+ ...
+     ap.add_argument("--n-bits", type=int, default=None)
++    ap.add_argument("--allow-short", action="store_true",
++                    help="needed for legacy 32-bit (Phase 3) models; weaker proof")
+     args = ap.parse_args()
+
++    if args.allow_short:
++        print("NOTE: --allow-short is on, models embedding fewer bits than the manifest signs are accepted")
+     all_right = True
+```
+
+### F3: Phase 5 tests for the full-payload rule (local)
+
+**What changes in `tests/test_phase5.py`:** `make_developer` marks its 32-bit test models as legacy
+(`allow_short=True`), which fixes the 4 failures from F1. Three new tests:
+1. `test_short_payload_rejected_unless_allowed`: the 32-bit model is rejected at the new check without the
+   flag, and passes with it, carrying the `only 32 of 256` warning.
+2. `test_forger_cannot_shrink_the_payload`: the H1 attack itself. An unmarked model with `n_bits` 1, 8 or 32
+   and no flag is rejected at the new check every time.
+3. `test_default_n_bits_is_the_signed_payload`: a 256-bit rs32 model with no `final.json` verifies, with
+   `n_bits` taken from the manifest (256), source "defaults" and no warning.
+
+**Command**
+
+```bash
+python -m pytest tests/test_phase5.py -v
+```
+
+**Output**
+
+```
+tests/test_phase5.py::test_own_model_verified PASSED
+tests/test_phase5.py::test_own_model_verified_rs32_full_payload PASSED
+tests/test_phase5.py::test_wrong_public_key_rejected PASSED
+tests/test_phase5.py::test_wrong_watermark_key_rejected PASSED
+tests/test_phase5.py::test_tampered_manifest_rejected PASSED
+tests/test_phase5.py::test_unmarked_model_rejected PASSED
+tests/test_phase5.py::test_someone_elses_model PASSED
+tests/test_phase5.py::test_garbage_inputs_never_crash PASSED
+tests/test_phase5.py::test_short_payload_rejected_unless_allowed PASSED
+tests/test_phase5.py::test_forger_cannot_shrink_the_payload PASSED
+tests/test_phase5.py::test_default_n_bits_is_the_signed_payload PASSED
+11 passed in 8.75s
+```
+
+**Change: `tests/test_phase5.py`**
+
+```diff
+-"""Run from the project root:  python -m pytest tests/test_phase5.py -v   (expect 8 passed)
++"""Run from the project root:  python -m pytest tests/test_phase5.py -v   (expect 11 passed)
+
+@@ make_developer() @@
+     return dict(model_path=root / "model" / "model.pt", public_key_path=root / "public_key.bin",
+-                wm_key_path=root / "watermark_key.bin", release_dir=root / "release")
++                wm_key_path=root / "watermark_key.bin", release_dir=root / "release",
++                allow_short=n_bits < 256)                    # 32-bit test models are "legacy"
+
+@@ end of file @@
++SHORT = "embedded payload covers the whole signed payload"
++
++
++def test_short_payload_rejected_unless_allowed(world):
++    dev = world["dev"]                                                   # 32-bit model, 256-bit manifest
++    ok, checks, _ = verify_model(**dict(dev, allow_short=False))
++    assert not ok and first_failure(checks) == SHORT
++    ok, checks, s = verify_model(**dev)                                  # allow_short=True (legacy)
++    assert ok and s["warning"].startswith("only 32 of 256")
++
++
++def test_forger_cannot_shrink_the_payload(world):
++    for n in (1, 8, 32):                                                 # the H1 attack: ask for few bits
++        ok, checks, _ = verify_model(**dict(world["unmarked"], n_bits=n, allow_short=False))
++        assert not ok and first_failure(checks) == SHORT, n
++
++
++def test_default_n_bits_is_the_signed_payload(world):
++    d = world["t"] / "no_final_json"
++    d.mkdir()
++    shutil.copy(world["rs"]["model_path"], d / "model.pt")               # no final.json next to the copy
++    ok, checks, s = verify_model(**dict(world["rs"], model_path=d / "model.pt", ecc="rs32"))
++    assert ok, checks
++    assert s["n_bits"] == 256 and "defaults" in s["source"] and "warning" not in s
+```
+
+### F4: docs for teammates and the results log (local)
+
+**Command** (to get the new expected test count for `HOW_TO_CHECK.md`)
+
+```bash
+python -m pytest tests/test_phase2.py tests/test_phase3.py tests/test_phase4.py tests/test_phase5.py -q
+# 29 passed in 15.01s   (was 26; +3 new Phase 5 tests)
+```
+
+**Changes: `docs/HOW_TO_CHECK.md`**
+- Step 3: expected `26 passed` -> `29 passed`.
+- Step 4b: a paragraph saying the verifier always checks all 256 signed bits, that `--n-bits 8` (or any
+  smaller number) is rejected with `FAIL  embedded payload covers the whole signed payload`, and why.
+- Step 4c: the Phase 3 model checked with the verifier, `--n-bits 32 --allow-short` (Linux and Windows
+  commands), the expected output with the `WARNING` line, and a note that without the flags it is REJECTED.
+- Step 6: the rs32 / Mallory `lam20_n256_rs32/seed3` models are now the defaults; the legacy Phase 3 command
+  (`--n-bits 32 --allow-short`, Mallory stand-in) and its expected `NOTE:` line.
+- Troubleshooting: a row for `FAIL  embedded payload covers the whole signed payload`.
+
+**Changes: `docs/results_log.md`**
+- New section "Fix H1: verifier must check the whole signed payload (recorded 2026-10-27)": the flaw, the
+  fix, what is not affected (Phase 4 and all 234 Phase 6 verifications used 256 bits), that the Phase 3
+  rows now need `--n-bits 32 --allow-short`, a table of the F1/F2 results, and the test counts (11 and 29).
+  The Phase 5 section above it is left as recorded.
+
+### F5: final check of the whole fix (local, 2026-10-27)
+
+**Commands**
+
+```bash
+# every test file (mldsa, torch, phases 2-6)
+python -m pytest tests -q
+
+# verifier on every Phase 4 model (no flags), Phase 3 with and without the legacy flags, unmarked + forger
+python -m verify.verify_model --model runs/wm_v1/lam20_n256_rs32/seed0/model.pt     # also seed1, seed2
+python -m verify.verify_model --model runs/wm_v1/lam20_n256_rs16/seed0/model.pt     # also seed1, seed2
+python -m verify.verify_model --model runs/wm_v1/lam20_n256_rep2/seed0/model.pt     # also seed1
+python -m verify.verify_model --model runs/wm_v0/lam1_n32/seed0/model.pt
+python -m verify.verify_model --model runs/wm_v0/lam1_n32/seed0/model.pt --n-bits 32 --allow-short
+python -m verify.verify_model --model runs/baseline/seed0/model.pt --ecc rs32 --n-bits 256
+python -m verify.verify_model --model runs/baseline/seed0/model.pt --n-bits 1
+python -m verify.verify_model --model runs/baseline/seed0/model.pt --n-bits 8 --ecc none
+
+# negative-case suite
+python -m experiments.phase5_negative_cases --seeds 0 1 2
+python -m experiments.phase5_negative_cases --seeds 0 1 2 --model-pattern "runs/wm_v1/lam20_n256_rs16/seed{seed}/model.pt"
+python -m experiments.phase5_negative_cases --seeds 0 1 2 --n-bits 32 --allow-short \
+    --model-pattern "runs/wm_v0/lam1_n32/seed{seed}/model.pt" --mallory-model mallory/runs/standin_lam5_n32/seed1/model.pt
+
+# Phase 6 still drives the verifier
+python -m attacks.check_compat
+```
+
+**Output**
+
+```
+pytest tests: 42 passed in 13.21s
+
+Phase 4 lam20_n256_rs32/seed0..2, rs16/seed0..2, rep2/seed0..1     -> VERIFIED (exit 0), all 8
+Phase 3 lam1_n32/seed0, no flags                                   -> REJECTED (134 of 256 bits differ)
+Phase 3 lam1_n32/seed0, --n-bits 32 --allow-short                  -> VERIFIED + WARNING only 32 of 256 ...
+baseline seed0, rs32 256 bits                                      -> REJECTED (decoder failed; min margin 0.00)
+baseline seed0, forger --n-bits 1                                  -> REJECTED (embedded payload covers the whole signed payload)
+baseline seed0, forger --n-bits 8 --ecc none                       -> REJECTED (embedded payload covers the whole signed payload)
+
+negative cases rs32 (defaults), seeds 0-2                          -> PASSED, no "NO" rows
+negative cases rs16, seeds 0-2                                     -> PASSED, no "NO" rows
+negative cases Phase 3 --n-bits 32 --allow-short, seeds 0-2        -> NOTE line, PASSED, no "NO" rows
+
+check_compat:
+1) clean model        : VERIFIED | wm read PASS | payload PASS | margin 2.25 | corrected 0 | erasures 0 | values 512 | settings ('rs32', 256, 'features.6.0.weight', 'mean')
+2) copied to temp dir : VERIFIED | same result as clean: True
+3) raw-flip probe     : ENABLED - reproduced verifier margin 2.248
+   flip rate of the clean model against itself: 0.0 (must be 0.0)
+COMPAT CHECK: PASSED, you can run Phase 6
+```
+
+All checks pass. Files changed on `fix-short-payload` (not committed): `verify/verify_model.py`,
+`experiments/phase5_negative_cases.py`, `tests/test_phase5.py`, `docs/HOW_TO_CHECK.md`,
+`docs/results_log.md`, `docs/phase_commands.md`.

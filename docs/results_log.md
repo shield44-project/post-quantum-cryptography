@@ -114,3 +114,27 @@ Accuracy cost of watermark
 - Done-when (wrong key, tampered manifest, unmarked model and someone else's model rejected; own model
   passes): **MET**.
 - tests: phases 2-5, 26 passed (Windows, liboqs 0.16.0 built natively).
+
+## Fix H1: verifier must check the whole signed payload (recorded 2026-10-27)
+- Flaw (found in review after Phase 6): `n_bits` came from the unsigned `final.json` / command line and
+  only `1 <= n_bits <= 256` was enforced. ecc, layer, mode and the watermark key are unsigned too, so a forger
+  could retry with few bits until an unmarked or someone else's model passed (50% per try at 1 bit, 1/256 at
+  8 bits; at the old default of 32 bits, a search over about 4 billion watermark keys).
+- Fix (branch `fix-short-payload`, from `phase6`): `n_bits` must equal the signed `payload_bits`; default
+  taken from the manifest instead of 32; `--allow-short` accepts fewer bits for legacy models only and prints
+  a WARNING line before the verdict. Commands and code: `docs/phase_commands.md`, "Phase 4-5 fix".
+- Not affected: all Phase 4 results and all 234 Phase 6 verifications (every one used `n_bits 256`).
+- Changed: the Phase 3 rows above now need `--n-bits 32 --allow-short` to reproduce.
+
+| check | result |
+|---|---|
+| Phase 4 rs32 / rs16 model, no flags | VERIFIED (256 bits) |
+| Phase 3 model, no flags / `--n-bits 32` without `--allow-short` | REJECTED (as intended) |
+| Phase 3 model, `--n-bits 32 --allow-short` | VERIFIED + WARNING (32 of 256 bits) |
+| unmarked model, forger asks `--n-bits 1` | REJECTED at the new check |
+| negative cases, Phase 4 rs32 and rs16, seeds 0-2 (now the default models) | PASSED, all rows right reason |
+| negative cases, Phase 3 with `--n-bits 32 --allow-short` | PASSED |
+| negative cases, Phase 3 without the flag | FAILED (as intended) |
+
+- tests: `test_phase5.py` 11 passed (3 new: short payload, forger with 1/8/32 bits, default n_bits from
+  manifest); phases 2-5, 29 passed (Windows, liboqs 0.16.0).

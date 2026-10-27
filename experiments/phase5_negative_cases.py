@@ -1,10 +1,12 @@
 """Phase 5 'done when' check (runs LOCALLY, needs liboqs): each negative case must be REJECTED for the
 right reason, and both our own model and Mallory's own model must be VERIFIED.
 
-    python -m experiments.phase5_negative_cases --seeds 0 1 2                    # Phase 3 models (now)
+    python -m experiments.phase5_negative_cases --seeds 0 1 2                    # Phase 4 rs32 models (default)
     python -m experiments.phase5_negative_cases --seeds 0 1 2 \
-        --model-pattern "runs/wm_v1/<run name>/seed{seed}/model.pt" \
-        --mallory-model mallory/runs/<run name>/seed0/model.pt                   # Phase 4 models (later)
+        --model-pattern "runs/wm_v1/lam20_n256_rs16/seed{seed}/model.pt"         # another Phase 4 run
+    python -m experiments.phase5_negative_cases --seeds 0 1 2 --n-bits 32 --allow-short \
+        --model-pattern "runs/wm_v0/lam1_n32/seed{seed}/model.pt" \
+        --mallory-model mallory/runs/standin_lam5_n32/seed1/model.pt             # legacy 32-bit Phase 3 models
 
 Tampered copies, wrong keys etc. live in a temporary folder; nothing is written to release/ or runs/.
 """
@@ -64,7 +66,8 @@ def run_cases(seed, args, tmp):
     rows = []
     for name, model, files, settings, expect_ok, reasons in cases:
         ok, checks, _ = verify_model(model, ecc=settings.get("ecc"), n_bits=settings.get("n_bits"),
-                                     layer=settings.get("layer"), mode=settings.get("mode"), **files)
+                                     layer=settings.get("layer"), mode=settings.get("mode"),
+                                     allow_short=args.allow_short, **files)
         fail, detail = first_failure(checks)
         right = (ok == expect_ok) and (reasons is None or any(fail.startswith(r) for r in reasons))
         rows.append((name, expect_ok, ok, fail, detail, right))
@@ -74,17 +77,21 @@ def run_cases(seed, args, tmp):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
-    ap.add_argument("--model-pattern", default="runs/wm_v0/lam1_n32/seed{seed}/model.pt")
+    ap.add_argument("--model-pattern", default="runs/wm_v1/lam20_n256_rs32/seed{seed}/model.pt")
     ap.add_argument("--baseline-pattern", default="runs/baseline/seed{seed}/model.pt")
     ap.add_argument("--mallory-dir", default="mallory")
-    ap.add_argument("--mallory-model", default="mallory/runs/standin_lam5_n32/seed1/model.pt")
+    ap.add_argument("--mallory-model", default="mallory/runs/lam20_n256_rs32/seed3/model.pt")
     ap.add_argument("--public-key", default="keys/public_key.bin")
     ap.add_argument("--wm-key", default="keys/watermark_key.bin")
     ap.add_argument("--release-dir", default="release")
     ap.add_argument("--ecc", default=None)
     ap.add_argument("--n-bits", type=int, default=None)
+    ap.add_argument("--allow-short", action="store_true",
+                    help="needed for legacy 32-bit (Phase 3) models; weaker proof")
     args = ap.parse_args()
 
+    if args.allow_short:
+        print("NOTE: --allow-short is on, models embedding fewer bits than the manifest signs are accepted")
     all_right = True
     with tempfile.TemporaryDirectory() as t:
         for seed in args.seeds:

@@ -169,7 +169,7 @@ venv\Scripts\python -m pytest tests/test_phase2.py tests/test_phase3.py tests/te
 venv\Scripts\python -m verify.verify_release --release-dir release --public-key release/public_key.bin
 ```
 
-Expected: `26 passed` (if you see `skipped`, liboqs or torch is missing in this venv, see step 2), then
+Expected: `29 passed` (if you see `skipped`, liboqs or torch is missing in this venv, see step 2), then
 
 ```
 PASS  load release files
@@ -240,6 +240,11 @@ VERIFIED
 Try the other models by changing the path: `lam20_n256_rs32/seed1`, `seed2`, `lam20_n256_rs16/seed0..2`,
 `lam20_n256_rep2/seed0..1`. All should print `VERIFIED`.
 
+The verifier always checks all 256 signed payload bits. Asking for fewer (for example `--n-bits 8`) is
+rejected with `FAIL  embedded payload covers the whole signed payload`, because the watermark settings
+are not signed and a short check could let an unrelated model pass by chance. Only legacy Phase 3 models
+may use fewer bits, with `--allow-short` (see 4c).
+
 An unmarked model must be rejected:
 
 **Linux / WSL**
@@ -273,6 +278,30 @@ venv\Scripts\python -m experiments.phase3_check_extraction --model runs/wm_v0/la
 
 Expected: `1) watermarked model, right key : 0/32 bit errors`, wrong keys and the unmarked baseline near
 BER 0.5, and `DONE-WHEN (0 bit errors on the clean model): PASSED`.
+
+The Phase 3 models carry only 32 of the 256 signed bits, so the verifier rejects them unless told this is a
+legacy model:
+
+**Linux / WSL**
+```bash
+python -m verify.verify_model --model runs/wm_v0/lam1_n32/seed0/model.pt --n-bits 32 --allow-short
+```
+
+**Windows (PowerShell)**
+```powershell
+venv\Scripts\python -m verify.verify_model --model runs/wm_v0/lam1_n32/seed0/model.pt --n-bits 32 --allow-short
+```
+
+Expected (the WARNING line is correct: 32 bits is a weaker proof than 256):
+
+```
+PASS  watermark read (ecc none, 32 values)  (min margin 3.60, corrected 0, erasures 0)
+PASS  extracted payload == SHA-256(signed manifest)  (32 bits match)
+WARNING  only 32 of 256 signed payload bits checked (--allow-short), weaker proof
+VERIFIED
+```
+
+Without `--n-bits 32 --allow-short` the same model is `REJECTED`; that is the intended behaviour.
 
 ---
 
@@ -341,7 +370,16 @@ model with Mallory's files VERIFIED), then
 DONE-WHEN (4 negative cases rejected, own model passes): PASSED
 ```
 
-For the rs16 models, change `lam20_n256_rs32` to `lam20_n256_rs16` in `--model-pattern`.
+For the rs16 models, change `lam20_n256_rs32` to `lam20_n256_rs16` in `--model-pattern`. The rs32 models
+and Mallory's `lam20_n256_rs32/seed3` are also the defaults, so `--seeds 0 1 2` alone runs the same check.
+
+For the legacy Phase 3 models (32 bits) add `--n-bits 32 --allow-short` and use the 32-bit Mallory stand-in:
+
+```bash
+python -m experiments.phase5_negative_cases --seeds 0 1 2 --n-bits 32 --allow-short --model-pattern "runs/wm_v0/lam1_n32/seed{seed}/model.pt" --mallory-model mallory/runs/standin_lam5_n32/seed1/model.pt
+```
+
+Expected: a `NOTE: --allow-short is on ...` line first, then the same all-`yes` tables and `PASSED`.
 
 ---
 
@@ -353,6 +391,7 @@ For the rs16 models, change `lam20_n256_rs32` to `lam20_n256_rs16` in `--model-p
 | `ModuleNotFoundError: No module named 'embedding'` (or `crypto`, `training`) | run from the project root with `python -m ...` |
 | `ModuleNotFoundError: No module named 'reedsolo'` | install the requirements again (step 2) |
 | `No such file or directory: 'keys/watermark_key.bin'` | step 4a |
+| `FAIL  embedded payload covers the whole signed payload` | the model or `--n-bits` asks for fewer than 256 bits. Legacy Phase 3 model: add `--n-bits 32 --allow-short` (4c). Phase 4 model: its `final.json` is missing or edited |
 | Fingerprint is not `81b57c4b28884f01` | wrong key file; ask the developer again |
 | Tests show `skipped` | liboqs or torch missing in this venv |
 | `Dataset not found or corrupted` in step 5 | run the CIFAR-10 download command, or leave out `--data-root` |

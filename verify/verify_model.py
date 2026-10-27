@@ -1,20 +1,25 @@
 """Phase 5: verify a MODEL against a signed release (runs LOCALLY, needs liboqs + torch).
 
-    python -m verify.verify_model --model runs/wm_v0/lam1_n32/seed0/model.pt \
+    python -m verify.verify_model --model runs/wm_v1/lam20_n256_rs32/seed0/model.pt \
         --public-key keys/public_key.bin --wm-key keys/watermark_key.bin --release-dir release
+    # legacy Phase 3 models (32 of the 256 signed bits, weaker proof):
+    python -m verify.verify_model --model runs/wm_v0/lam1_n32/seed0/model.pt --n-bits 32 --allow-short
 
 Checks, in order. A failing stage stops the run, because later stages trust earlier ones:
   1. release   : files load, key id, algorithm, signature, payload.hex   (verify.verify_release)
   2. model     : architecture from the SIGNED manifest, weights load at the signed width,
                  parameter count == manifest model.num_params
-  3. watermark : X @ v with the watermark key, then ECC decode
-  4. payload   : decoded bits == first n_bits of SHA-256(signed manifest)
+  3. watermark : n_bits == signed payload_bits, X @ v with the watermark key, then ECC decode
+  4. payload   : decoded bits == SHA-256(signed manifest), all payload_bits of it
 VERIFIED only if every check passes (a decoder saying "ok" is never enough on its own).
 Exit code 0 = VERIFIED, 1 = REJECTED.
 
 Watermark settings (ecc, n_bits, layer, mode) are not in the manifest (adding them would change
 the payload of every trained model). They come from the command line, else from the final.json
-next to the model, else the Phase 3 defaults; the source is printed.
+next to the model, else the defaults (n_bits default = the signed payload_bits); the source is printed.
+Because they are unsigned, n_bits must equal the signed payload_bits: with fewer bits a forger can
+retry keys/layers until an unrelated model passes. --allow-short accepts fewer (legacy models only)
+and prints a WARNING line before the verdict.
 """
 import argparse
 import json
@@ -24,7 +29,7 @@ from pathlib import Path
 from crypto.manifest import payload_bits
 from verify.verify_release import verify_release
 
-DEFAULTS = {"ecc": "none", "n_bits": 32, "layer": "features.6.0.weight", "mode": "mean"}
+DEFAULTS = {"ecc": "none", "n_bits": None, "layer": "features.6.0.weight", "mode": "mean"}  # None = signed payload_bits
 
 
 def resolve_settings(model_path, ecc=None, n_bits=None, layer=None, mode=None):
@@ -48,8 +53,9 @@ def resolve_settings(model_path, ecc=None, n_bits=None, layer=None, mode=None):
 
 
 def verify_model(model_path, public_key_path, wm_key_path, release_dir,
-                 ecc=None, n_bits=None, layer=None, mode=None):
-    """Return (ok, checks, settings). checks = list of (name, passed, detail)."""
+                 ecc=None, n_bits=None, layer=None, mode=None, allow_short=False):
+    """Return (ok, checks, settings). checks = list of (name, passed, detail).
+    allow_short=True accepts n_bits < signed payload_bits (legacy models); settings["warning"] then says so."""
     settings, source = resolve_settings(model_path, ecc, n_bits, layer, mode)
     settings["source"] = source
 
@@ -89,11 +95,19 @@ def verify_model(model_path, public_key_path, wm_key_path, release_dir,
         from embedding.keys import load_key
         from embedding.projection import ProjectionWatermark, get_weight
 
-        if not 1 <= int(settings["n_bits"]) <= manifest["watermark"]["payload_bits"]:
-            add("n_bits within signed payload size", False,
-                "%s requested, manifest has %d" % (settings["n_bits"], manifest["watermark"]["payload_bits"]))
+        signed_bits = int(manifest["watermark"]["payload_bits"])
+        if settings["n_bits"] is None:
+            settings["n_bits"] = signed_bits
+        n_req = int(settings["n_bits"])
+        if not 1 <= n_req <= signed_bits or (n_req < signed_bits and not allow_short):
+            add("embedded payload covers the whole signed payload", False,
+                "settings say %d bits, the signed manifest has %d (--allow-short is for legacy models only)"
+                % (n_req, signed_bits))
             return False, checks, settings
-        code = get_code(settings["ecc"], int(settings["n_bits"]))
+        if n_req < signed_bits:
+            settings["warning"] = ("only %d of %d signed payload bits checked (--allow-short), weaker proof"
+                                   % (n_req, signed_bits))
+        code = get_code(settings["ecc"], n_req)
         wm = ProjectionWatermark(load_key(wm_key_path), settings["layer"], code.n_bits, settings["mode"],
                                  get_weight(model, settings["layer"]).shape)
         _, logits = wm.extract(model)
@@ -108,7 +122,10 @@ def verify_model(model_path, public_key_path, wm_key_path, release_dir,
         return False, checks, settings
 
     # 4. payload: compare with the SIGNED manifest, never with payload.hex
-    expected = payload_bits(manifest, int(settings["n_bits"]))
+    expected = payload_bits(manifest, n_req)
+    if len(d["bits"]) != len(expected):              # zip() below would silently compare only the overlap
+        add("extracted payload length", False, "%d bits read, %d expected" % (len(d["bits"]), len(expected)))
+        return False, checks, settings
     wrong = sum(int(a != b) for a, b in zip(d["bits"], expected))
     add("extracted payload == SHA-256(signed manifest)", wrong == 0,
         "%d bits match" % len(expected) if wrong == 0 else "%d of %d bits differ" % (wrong, len(expected)))
@@ -125,14 +142,18 @@ def main():
     ap.add_argument("--n-bits", type=int, default=None)
     ap.add_argument("--layer", default=None)
     ap.add_argument("--mode", default=None)
+    ap.add_argument("--allow-short", action="store_true",
+                    help="accept legacy models that embed fewer bits than the manifest signs (weaker proof)")
     args = ap.parse_args()
 
     ok, checks, s = verify_model(args.model, args.public_key, args.wm_key, args.release_dir,
-                                 args.ecc, args.n_bits, args.layer, args.mode)
+                                 args.ecc, args.n_bits, args.layer, args.mode, allow_short=args.allow_short)
     print("watermark settings (%s): ecc %s | n_bits %s | layer %s | mode %s"
           % (s["source"], s["ecc"], s["n_bits"], s["layer"], s["mode"]))
     for name, passed, detail in checks:
         print("%s  %s%s" % ("PASS" if passed else "FAIL", name, "  (" + detail + ")" if detail else ""))
+    if s.get("warning"):
+        print("WARNING  " + s["warning"])              # before the verdict: attacks/measure.py reads the last line
     print("VERIFIED" if ok else "REJECTED")
     sys.exit(0 if ok else 1)
 
