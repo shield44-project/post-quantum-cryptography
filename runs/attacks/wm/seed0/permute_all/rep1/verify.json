@@ -1,0 +1,15 @@
+{
+  "verdict": "REJECTED",
+  "wm_read": "FAIL",
+  "payload_match": null,
+  "min_margin": 0.03,
+  "corrected": null,
+  "erasures": null,
+  "n_values": 512,
+  "ecc": "rs32",
+  "n_bits": 256,
+  "layer": "features.6.0.weight",
+  "mode": "mean",
+  "returncode": 1,
+  "flip_rate": 0.50390625
+}
