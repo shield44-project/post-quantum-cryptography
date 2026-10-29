@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="pqctl-token" content="__PQCTL_TOKEN__">
+<title>PQ Provenance Control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/static/app.css">
+<link rel="icon" href="/static/mark.svg" type="image/svg+xml">
+</head>
+<body>
+<div class="app">
+  <aside class="rail" id="rail">
+    <a class="brand" href="#overview">
+      <img src="/static/mark.svg" alt="" width="28" height="28">
+      <span><b>PQ Provenance</b><small>control centre</small></span>
+    </a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="#overview" data-route="overview">Home</a>
+      <a href="#labs" data-route="labs">Labs</a>
+      <a href="#test" data-route="test">Test model</a>
+      <div class="nav-label">Phases</div>
+      <div id="nav-phases"></div>
+      <div class="nav-label">Data</div>
+      <a href="#labs/results" data-route="labs">Results and charts</a>
+      <a href="#jobs" data-route="jobs">Jobs <span class="count" id="nav-jobs-count"></span></a>
+      <a href="#env" data-route="env">Environment <span class="dot" id="nav-env-dot"></span></a>
+    </nav>
+    <button class="rail-job" id="rail-job" type="button" hidden>
+      <span class="pulse"></span>
+      <span class="rail-job-text"><b id="rail-job-title"></b><small id="rail-job-sub"></small></span>
+    </button>
+  </aside>
+
+  <div class="main">
+    <header class="top">
+      <button class="menu-btn" id="menu-btn" type="button" aria-label="Menu">Menu</button>
+      <div class="crumbs" id="crumbs"></div>
+      <div class="top-right">
+        <span class="pill mono" id="git-pill" title="Git branch and commit"></span>
+        <button class="btn ghost" id="term-toggle" type="button" aria-pressed="false" title="Show or hide the terminal">Terminal</button>
+        <button class="btn primary" id="run-all" type="button">Run every check</button>
+      </div>
+    </header>
+    <main id="view" class="view" tabindex="-1"></main>
+  </div>
+
+  <section class="dock" id="dock" aria-label="Job output" hidden>
+    <div class="dock-head">
+      <div class="dock-title">
+        <span class="chip" id="dock-status"></span>
+        <b id="dock-name"></b>
+      </div>
+      <div class="dock-actions">
+        <div class="seg" role="group" aria-label="Text size">
+          <button class="btn ghost sm icon" id="term-smaller" type="button" aria-label="Smaller text" title="Smaller text (-)">A-</button>
+          <button class="btn ghost sm icon" id="term-bigger" type="button" aria-label="Bigger text" title="Bigger text (+)">A+</button>
+        </div>
+        <button class="btn ghost sm" id="term-wrap" type="button" aria-pressed="true" title="Wrap long lines (W)">Wrap</button>
+        <button class="btn ghost sm" id="dock-copy" type="button">Copy log</button>
+        <button class="btn danger sm" id="dock-cancel" type="button">Cancel</button>
+        <button class="btn ghost sm" id="dock-full" type="button" aria-pressed="false" title="Full screen (F)">Full screen</button>
+        <button class="btn ghost sm icon" id="dock-close" type="button" aria-label="Close">Close</button>
+      </div>
+    </div>
+    <div class="dock-meta">
+      <div class="steps" id="dock-steps"></div>
+      <div class="mono faint" id="dock-time"></div>
+    </div>
+    <pre class="term" id="term" tabindex="0"></pre>
+    <div class="dock-foot">
+      <span class="verdict" id="dock-verdict"></span>
+      <span class="keys faint">F full screen, + and - text size, W wrap, Esc close</span>
+      <label class="follow"><input type="checkbox" id="follow" checked> follow output</label>
+    </div>
+  </section>
+</div>
+
+<div class="modal" id="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <h3 id="modal-title"></h3>
+    <div id="modal-body"></div>
+    <div class="modal-actions">
+      <button class="btn ghost" id="modal-cancel" type="button">Cancel</button>
+      <button class="btn primary" id="modal-ok" type="button">Continue</button>
+    </div>
+  </div>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script src="/static/app.js"></script>
+<script src="/static/labs.js"></script>
+</body>
+</html>
