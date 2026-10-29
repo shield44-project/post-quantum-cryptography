@@ -19,7 +19,7 @@ from pathlib import Path
 from pqctl import __version__
 from pqctl import state as S
 from pqctl import tasks as T
-from pqctl.runner import Runner, kill_tree, verdict_tone
+from pqctl.runner import Runner, _wants_force, kill_tree, verdict_tone
 
 # ------------------------------------------------------------------ terminal styling
 _COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
@@ -157,7 +157,7 @@ def _run_job(r, job):
 
 
 def _confirm_danger(task, params, yes):
-    if task.get("danger") and str(params.get("force", "")).lower() in ("1", "true", "yes", "y", "on"):
+    if task.get("danger") and _wants_force(params):
         print(c("  ! " + task["danger"], BAD))
         if yes:
             return True
@@ -219,7 +219,10 @@ def cmd_pipeline(r, args):
 
 def cmd_colab(r, args):
     t = T.BY_ID.get(args.task) or sys.exit(c("unknown task", BAD))
-    p = T.clean_params(t, parse_sets(args.set), r.settings, r.root)
+    try:
+        p = T.clean_params(t, parse_sets(args.set), r.settings, r.root)
+    except T.ParamError as e:
+        sys.exit(c("  " + str(e), BAD))
     print(T.colab_cell(t, p, r.root))
 
 
@@ -319,7 +322,7 @@ def task_menu(r, t):
         return
     if ch == "b":
         return
-    if not _confirm_danger(t, params, False) and t.get("danger") and params.get("force"):
+    if not _confirm_danger(t, params, False) and t.get("danger") and _wants_force(params):
         print(c("  not confirmed", WARN))
         return
     _run_job(r, job_preview)

@@ -110,3 +110,8 @@ def test_training_attacks_run(net):
 def test_carrier_block_index(net):
     k = carrier_block_index(net, LAYER)
     assert conv_blocks(net)[k][0] is net.get_submodule("features.6.0")
+
+
+def test_quantize_refuses_one_bit(net):
+    with pytest.raises(ValueError):
+        quantize(net, 1)                             # qmax would be 0: every weight becomes NaN

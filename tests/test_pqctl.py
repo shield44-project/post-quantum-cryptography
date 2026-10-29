@@ -153,3 +153,29 @@ def test_inspector_reads_the_release():
     o = info["ours"]
     assert o["payload_matches"] and o["key_id_matches"]
     assert o["signature_bytes"] == 3309 and o["public_key_bytes"] == 1952
+
+
+def test_a_failed_step_fails_the_whole_job(tmp_path):
+    r = Runner(tmp_path)
+    j = Job("p4.verify_all", "two steps", [("bad", ["-c", "raise SystemExit(3)"]), ("good", ["-c", "pass"])], {},
+            python=sys.executable)
+    r.run(j)
+    assert j.status == "failed" and j.exit_code == 3       # the last step passing must not hide the first failure
+
+
+def test_options_must_be_an_object():
+    with pytest.raises(T.ParamError):
+        T.clean_params(T.BY_ID["lab.sign"], ["message", "x"], {}, ROOT)
+    p = T.clean_params(T.BY_ID["lab.tamper"], {"width": "64"}, {}, ROOT)
+    assert p["width"] == 64
+    with pytest.raises(T.ParamError):
+        T.clean_params(T.BY_ID["lab.tamper"], {"width": "wide"}, {}, ROOT)
+
+
+def test_attack_lab_strength_limits():
+    from pqctl.actions.attack_lab import ATTACKS, LIMITS, check_strength
+    assert set(LIMITS) <= set(ATTACKS)
+    check_strength("quantize", 4)
+    for attack, s in (("quantize", 1), ("prune_global", 1.0), ("noise_all", -0.1)):
+        with pytest.raises(SystemExit):
+            check_strength(attack, s)

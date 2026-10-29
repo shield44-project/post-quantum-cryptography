@@ -261,7 +261,7 @@ class Runner:
         log_path = self.dir / "logs" / (job.id + ".log")
         env = {**os.environ, **job.env, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}
         env["PYTHONPATH"] = str(self.root) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
-        code = 0
+        code = worst = 0                  # worst: first non-zero exit code of any step, so one failed step fails the job
         for i, (label, argv) in enumerate(job.steps):
             if job.cancel_requested:
                 break
@@ -277,7 +277,7 @@ class Runner:
                 job.proc = subprocess.Popen(cmd, **kw)
             except OSError as e:
                 job.note("could not start: %s" % e, out)
-                code = 127
+                code = worst = 127
                 break
             if job.cancel_requested:          # cancel arrived while the process was starting
                 kill_tree(job.proc)
@@ -288,13 +288,14 @@ class Runner:
                     break
                 job.add_text(chunk.decode("utf-8", errors="replace"), out)
             code = job.proc.wait()
+            worst = worst or code
             if job.live:
                 job.add_text("\n", out)
             if job.cancel_requested:
                 break
             if code != 0 and len(job.steps) > 1:
                 job.note("(exit code %d)" % code, out)
-        job.exit_code = code
+        code = job.exit_code = worst
         job.ended = time.time()
         with job.lock:                   # lift the lab tools' data line out of the human log
             data = [l for l in job.lines if l.startswith("PQCTL_JSON ")]

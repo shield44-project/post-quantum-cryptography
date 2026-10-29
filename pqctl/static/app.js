@@ -531,13 +531,15 @@
   async function waitVerify(id, box) {
     box.replaceChildren(verdictBox("wait", "Checking…", "Running verify.verify_model"));
     let lines = [], since = 0, j;
-    for (;;) {
-      j = await api("/api/jobs/" + id + "?since=" + since);
-      lines = lines.concat(j.new); since = j.since + j.new.length;
-      if (j.status !== "running" && j.status !== "queued") break;
-      await new Promise((r) => setTimeout(r, 400));
-      if (S.verifyJob !== id) return;
-    }
+    try {
+      for (;;) {
+        j = await api("/api/jobs/" + id + "?since=" + since);
+        lines = lines.concat(j.new); since = j.since + j.new.length;
+        if (j.status !== "running" && j.status !== "queued") break;
+        await new Promise((r) => setTimeout(r, 400));
+        if (S.verifyJob !== id) return;
+      }
+    } catch (e) { box.replaceChildren(verdictBox("bad", "ERROR", e.message)); return; }
     const verdict = lines.find((l) => /^(VERIFIED|REJECTED)\s*$/.test(l.trim()));
     const settings = lines.find((l) => l.startsWith("watermark settings"));
     const checks = lines.filter((l) => /^(PASS|FAIL|WARNING)\s/.test(l));
@@ -598,7 +600,7 @@
           h("tbody", {}, rows.map((r) => { const [tone, word] = outcome(r); return h("tr", {},
             h("td", { class: "mono", text: r.attack_id }), h("td", { class: "muted", text: r.family }), h("td", { class: "num", text: fix(r.runs, 0) }),
             h("td", { class: "num" }, h("div", { style: { display: "flex", gap: "8px", alignItems: "center", justifyContent: "flex-end" } }, h("div", { class: "bar" }, h("i", { style: { width: (100 * r.verified_rate) + "%" } })), pct(r.verified_rate, 0))),
-            h("td", { class: "num", text: pct(r.mean_acc) }), h("td", { class: "num", text: fix(100 * r.mean_drop) }), h("td", { class: "num", text: r.mean_flip === null ? "—" : pct(r.mean_flip) }),
+            h("td", { class: "num", text: pct(r.mean_acc) }), h("td", { class: "num", text: r.mean_drop === null ? "—" : fix(100 * r.mean_drop) }), h("td", { class: "num", text: r.mean_flip === null ? "—" : pct(r.mean_flip) }),
             h("td", {}, h("span", { class: "chip " + tone, text: word }))); })))),
         h("p", { class: "muted", text: "Removed = the verifier stopped saying VERIFIED while accuracy dropped by at most 5 points. Model ruined = the watermark was lost only by destroying the model." }));
     } else if (tab === "plots") {
@@ -811,12 +813,14 @@
     catch (e) { box.replaceChildren(h("div", { class: "mini" }, h("span", { class: "big bad", text: "could not start" }), h("span", { class: "why", text: e.message }))); return "ERROR"; }
     const id = r.job.id;
     let lines = [], since = 0, j;
-    for (;;) {
-      j = await api("/api/jobs/" + id + "?since=" + since);
-      lines = lines.concat(j.new); since = j.since + j.new.length;
-      if (j.status !== "running" && j.status !== "queued") break;
-      await new Promise((res) => setTimeout(res, 400));
-    }
+    try {
+      for (;;) {
+        j = await api("/api/jobs/" + id + "?since=" + since);
+        lines = lines.concat(j.new); since = j.since + j.new.length;
+        if (j.status !== "running" && j.status !== "queued") break;
+        await new Promise((res) => setTimeout(res, 400));
+      }
+    } catch (e) { box.replaceChildren(h("div", { class: "mini" }, h("span", { class: "big bad", text: "lost contact" }), h("span", { class: "why", text: e.message }))); return "ERROR"; }
     const vline = lines.find((l) => /^(VERIFIED|REJECTED)\s*$/.test(l.trim()));
     const word = (j.result && j.result.verdict) || (vline ? vline.trim() : (j.verdict && /PASSED|FAILED/.test(j.verdict) ? j.verdict.replace(/.*(PASSED|FAILED).*/, "$1") : (j.verdict || j.status.toUpperCase())));
     const fail = lines.find((l) => l.startsWith("FAIL"));

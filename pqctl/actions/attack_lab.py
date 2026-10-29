@@ -34,6 +34,18 @@ ATTACKS = {
                       "Write an attacker's own 128-bit watermark over it", "epochs", True),
 }
 
+# id -> (lowest, highest) strength that makes sense; attacks not listed ignore the strength
+LIMITS = {"noise_all": (0, 10), "noise_carrier": (0, 10), "prune_global": (0, 0.999), "prune_layer": (0, 0.999),
+          "quantize": (2, 16), "quantize_pc": (2, 16), "rescale": (1, 1000), "finetune": (1, 50), "overwrite": (1, 50)}
+
+
+def check_strength(attack, s):
+    lo, hi = LIMITS.get(attack, (float("-inf"), float("inf")))
+    if not lo <= s <= hi:
+        msg = "strength %g is out of range for %s: use %g to %g" % (s, attack, lo, hi)
+        emit({"error": msg})                  # so the dashboard shows the reason
+        raise SystemExit(msg)
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -51,6 +63,7 @@ def main():
     from verify.verify_model import resolve_settings, verify_model
 
     family, to_params, label, unit, needs_train = ATTACKS[args.attack]
+    check_strength(args.attack, args.strength)
     params = to_params(args.strength)
     src = Path(args.model)
     final_src = src.parent / "final.json"

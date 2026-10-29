@@ -217,7 +217,8 @@ def phases(root, history):
         metric = None
         if ph["n"] == 1 and b:
             accs = [x["acc"] for x in b if x["acc"]]
-            metric = {"value": "%.1f%%" % (100 * sum(accs) / len(accs)), "label": "mean accuracy, %d seeds" % len(accs)}
+            if accs:
+                metric = {"value": "%.1f%%" % (100 * sum(accs) / len(accs)), "label": "mean accuracy, %d seeds" % len(accs)}
         elif ph["n"] == 2:
             m = (_read_json(root / "release/signed_manifest.json") or {}).get("manifest", {})
             if m:

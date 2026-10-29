@@ -32,13 +32,16 @@ def seed_everything(seed: int):
 
 
 # ---------------------------------------------------------------- model io
-def load_state_dict(path):
-    """Accepts a raw state_dict, {'state_dict': ...} or a pickled nn.Module."""
+def load_state_dict(path, allow_pickle=False):
+    """Accepts a raw state_dict, {'state_dict': ...} or (allow_pickle=True) a pickled nn.Module.
+    A full unpickle can run code, so it is only done when asked for."""
     try:
         obj = torch.load(path, map_location="cpu", weights_only=True)
     except TypeError:
         obj = torch.load(path, map_location="cpu")
-    except Exception:
+    except Exception as e:
+        if not allow_pickle:
+            raise ValueError("not a plain weights file (%s); refusing to unpickle it" % type(e).__name__) from e
         obj = torch.load(path, map_location="cpu", weights_only=False)
     if isinstance(obj, nn.Module):
         obj = obj.state_dict()

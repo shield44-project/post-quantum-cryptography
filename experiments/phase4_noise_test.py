@@ -37,7 +37,7 @@ def fill_settings(args):
 
 
 @torch.no_grad()
-def test_accuracy(model, data_root):
+def measure_accuracy(model, data_root):
     import torchvision
     import torchvision.transforms as T
     from torch.utils.data import DataLoader
@@ -97,7 +97,7 @@ def main():
             recovered += int(d["ok"] and d["bits"] == payload)
         acc = None
         if args.data_root:
-            acc = test_accuracy(add_gaussian_noise(model, level, generator=torch.Generator().manual_seed(args.seed)),
+            acc = measure_accuracy(add_gaussian_noise(model, level, generator=torch.Generator().manual_seed(args.seed)),
                                 args.data_root)
         rows.append({"level": level, "raw_errors": raw, "no_ecc_errors": plain, "recovered": recovered,
                      "trials": args.trials, "mean_min_abs_logit": st.mean(margins), "test_acc": acc})

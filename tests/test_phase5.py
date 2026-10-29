@@ -155,3 +155,34 @@ def test_default_n_bits_is_the_signed_payload(world):
     ok, checks, s = verify_model(**dict(world["rs"], model_path=d / "model.pt", ecc="rs32"))
     assert ok, checks
     assert s["n_bits"] == 256 and "defaults" in s["source"] and "warning" not in s
+
+
+def test_nan_weights_rejected(world):
+    d = world["t"] / "nan_model"
+    d.mkdir()
+    state = torch.load(world["rs"]["model_path"], weights_only=True)
+    state["features.0.0.weight"][0, 0, 0, 0] = float("nan")
+    torch.save(state, d / "model.pt")
+    shutil.copy(world["rs"]["model_path"].parent / "final.json", d / "final.json")
+    ok, checks, _ = verify_model(**dict(world["rs"], model_path=d / "model.pt"))
+    assert not ok and first_failure(checks) == "weights are finite numbers"
+
+
+def test_pickled_module_is_never_unpickled(world):
+    d = world["t"] / "pickled"
+    d.mkdir()
+    torch.save(SmallCNN(width=8), d / "model.pt")                      # a whole module: loading it runs pickle code
+    ok, checks, _ = verify_model(**dict(world["dev"], model_path=d / "model.pt"))
+    assert not ok and "refusing to unpickle" in next(det for _, p, det in checks if not p)
+
+
+def test_json_output(world):
+    import subprocess
+    import sys
+    rs = world["rs"]
+    p = subprocess.run([sys.executable, "-m", "verify.verify_model", "--json", "--model", str(rs["model_path"]),
+                        "--public-key", str(rs["public_key_path"]), "--wm-key", str(rs["wm_key_path"]),
+                        "--release-dir", str(rs["release_dir"])], capture_output=True, text=True, timeout=120)
+    out = json.loads(p.stdout)
+    assert p.returncode == 0 and out["verdict"] == "VERIFIED"
+    assert all(c["passed"] for c in out["checks"]) and out["settings"]["ecc"] == "rs32"

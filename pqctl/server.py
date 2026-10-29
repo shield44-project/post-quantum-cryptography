@@ -82,7 +82,10 @@ class App:
         j = self.runner.jobs.get(jid)
         if not j:
             return None
-        since = int(q.get("since", ["0"])[0] or 0)
+        try:
+            since = max(0, int(q.get("since", ["0"])[0] or 0))
+        except ValueError:
+            raise T.ParamError("since must be a whole number")
         with j.lock:
             lines, live = j.lines[since:], j.live
         out = {**j.summary(), "since": since, "new": lines, "live": live}
@@ -94,8 +97,11 @@ class App:
         t = T.BY_ID.get(q.get("task", [""])[0])
         if not t:
             raise T.ParamError("unknown task")
-        params = json.loads(q.get("params", ["{}"])[0] or "{}")
-        p = T.clean_params(t, params, self.runner.settings, self.root)
+        try:
+            params = json.loads(q.get("params", ["{}"])[0] or "{}")
+        except ValueError:
+            raise T.ParamError("params must be JSON")
+        p =T.clean_params(t, params, self.runner.settings, self.root)
         return {"cell": T.colab_cell(t, p, self.root)}
 
     # --------------------------------------------------------------- POST handlers
@@ -148,8 +154,11 @@ def make_handler(app):
             self.send_header("Referrer-Policy", "no-referrer")
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
-            self.end_headers()
-            self.wfile.write(data)
+            try:
+                self.end_headers()
+                self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+                self.close_connection = True   # the browser left (reload, navigation, cancelled poll): nothing to tell it
 
         def _host_ok(self):
             if self.headers.get("Host") not in allowed_hosts:
@@ -206,7 +215,9 @@ def make_handler(app):
                 body = json.loads(self.rfile.read(min(n, 1_000_000)) or b"{}")
             except (ValueError, json.JSONDecodeError):
                 return self._send(400, {"error": "bad JSON"})
-            routes = {"/api/run": app.run, "/api/pipeline": app.pipeline, "/api/cancel": app.cancel,
+            if not isinstance(body, dict):
+                return self._send(400, {"error": "body must be a JSON object"})
+            routes ={"/api/run": app.run, "/api/pipeline": app.pipeline, "/api/cancel": app.cancel,
                       "/api/settings": app.settings, "/api/preview": app.preview}
             fn = routes.get(urlparse(self.path).path)
             if not fn:

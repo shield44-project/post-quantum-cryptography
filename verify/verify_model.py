@@ -12,7 +12,8 @@ Checks, in order. A failing stage stops the run, because later stages trust earl
   3. watermark : n_bits == signed payload_bits, X @ v with the watermark key, then ECC decode
   4. payload   : decoded bits == SHA-256(signed manifest), all payload_bits of it
 VERIFIED only if every check passes (a decoder saying "ok" is never enough on its own).
-Exit code 0 = VERIFIED, 1 = REJECTED.
+Exit code 0 = VERIFIED, 1 = REJECTED. --json prints the same result as one JSON object (for scripts and CI).
+Model files are loaded as plain tensors only: a checkpoint that needs a full unpickle is REJECTED, never executed.
 
 Watermark settings (ecc, n_bits, layer, mode) are not in the manifest (adding them would change
 the payload of every trained model). They come from the command line, else from the final.json
@@ -22,6 +23,7 @@ retry keys/layers until an unrelated model passes. --allow-short accepts fewer (
 and prints a WARNING line before the verdict.
 """
 import argparse
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -85,6 +87,9 @@ def verify_model(model_path, public_key_path, wm_key_path, release_dir,
         if not add("parameter count matches manifest", n_params == manifest["model"]["num_params"],
                    "model %d, manifest %d" % (n_params, manifest["model"]["num_params"])):
             return False, checks, settings
+        bad = [k for k, t in model.state_dict().items() if t.is_floating_point() and not bool(torch.isfinite(t).all())]
+        if not add("weights are finite numbers", not bad, "NaN or inf in %s" % ", ".join(bad[:3]) if bad else ""):
+            return False, checks, settings
     except Exception as e:
         add("model loads at signed width", False, "%s: %s" % (type(e).__name__, e))
         return False, checks, settings
@@ -144,10 +149,17 @@ def main():
     ap.add_argument("--mode", default=None)
     ap.add_argument("--allow-short", action="store_true",
                     help="accept legacy models that embed fewer bits than the manifest signs (weaker proof)")
+    ap.add_argument("--json", action="store_true", help="print one JSON object instead of the text report")
     args = ap.parse_args()
 
-    ok, checks, s = verify_model(args.model, args.public_key, args.wm_key, args.release_dir,
-                                 args.ecc, args.n_bits, args.layer, args.mode, allow_short=args.allow_short)
+    # with --json, stdout must hold only the JSON: anything printed while verifying (liboqs prints a banner) goes to stderr
+    with contextlib.redirect_stdout(sys.stderr if args.json else sys.stdout):
+        ok, checks, s = verify_model(args.model, args.public_key, args.wm_key, args.release_dir,
+                                     args.ecc, args.n_bits, args.layer, args.mode, allow_short=args.allow_short)
+    if args.json:
+        print(json.dumps({"verdict": "VERIFIED" if ok else "REJECTED", "model": str(args.model), "settings": s,
+                          "checks": [{"name": n, "passed": p, "detail": d} for n, p, d in checks]}, indent=2))
+        sys.exit(0 if ok else 1)
     print("watermark settings (%s): ecc %s | n_bits %s | layer %s | mode %s"
           % (s["source"], s["ecc"], s["n_bits"], s["layer"], s["mode"]))
     for name, passed, detail in checks:

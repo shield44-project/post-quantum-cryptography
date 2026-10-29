@@ -143,7 +143,9 @@
   /** Simple line chart: series [{name, pts:[{x,y,ok}], }], with optional y reference line. */
   function lineChart({ series, xLabel, yLabel, yMin = 0, yMax = 1, ref, xFmt = (v) => String(v), yFmt = (v) => Math.round(v * 100) + "%", height = 210, xLog = false }) {
     const W = 460, H = height, m = { l: 40, r: 12, t: 12, b: 34 };
+    series = series.map((s) => ({ ...s, pts: s.pts.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y)) }));
     const xs = series.flatMap((s) => s.pts.map((p) => p.x));
+    if (!xs.length) return h("div", { class: "empty", text: "No results for this attack yet." });
     let x0 = Math.min(...xs), x1 = Math.max(...xs);
     if (x0 === x1) { x0 -= 1; x1 += 1; }
     const tx = (v) => xLog ? Math.log10(v) : v;
@@ -270,7 +272,7 @@
         const j = await runJob("lab.xray", { model: sel.value, key: key.value });
         if (!j.result || j.result.error) { out.replaceChildren(resultCard(j)); return; }
         out.replaceChildren(resultCard(j, { showChecks: false, why: j.result.verdict === "VERIFIED" ? "The hidden 256 bits equal the signed record's fingerprint." : "The hidden code does not match the signed record." }), xrayView(j.result));
-      } catch (e) { toast(e.message, "bad"); }
+      } catch (e) { out.replaceChildren(h("div", { class: "rcard bad" }, h("p", { class: "rwhy", text: e.message }))); }
     };
     const preset = (label, model, k) => h("button", { class: "btn sm", type: "button", text: label, onclick: () => { sel.value = model; key.value = k; go(); } });
     target().replaceChildren(
@@ -327,7 +329,8 @@
       cur = a; S.attackId = a.id;
       cards.querySelectorAll(".acard").forEach((c) => c.setAttribute("aria-pressed", String(c.dataset.id === a.id)));
       sbox.hidden = a.min === undefined;
-      if (a.min !== undefined) { slider.min = a.min; slider.max = a.max; slider.step = a.step; slider.value = S.attackStrength && S.attackId === a.id ? S.attackStrength : a.def; }
+      const saved = (S.attackStrengths || {})[a.id];   // remembered per attack: 4 bits must not become 4 for pruning
+      if (a.min !== undefined) { slider.min = a.min; slider.max = a.max; slider.step = a.step; slider.value = saved !== undefined ? saved : a.def; }
       showStrength();
     };
     const showStrength = () => {
@@ -346,7 +349,8 @@
       h("div", { class: "arow" }, ATTACKS.filter((a) => a.group === g).map((a) => h("button", { type: "button", class: "acard", "data-id": a.id, "aria-pressed": "false",
         onclick: () => setAttack(a) }, h("b", { text: a.name }), h("small", { text: a.sub })))))));
     const run = async () => {
-      S.attackModel = model.value; S.attackAcc = acc.checked; S.attackStrength = slider.value;
+      S.attackModel = model.value; S.attackAcc = acc.checked;
+      if (cur.min !== undefined) S.attackStrengths = Object.assign(S.attackStrengths || {}, { [cur.id]: slider.value });
       if (cur.slow && !(await P.modal({ title: "This attack retrains the model", ok: "Run it", body: h("p", { text: "On a laptop CPU each epoch takes a few minutes. The rest of the dashboard keeps working while it runs." }) }))) return;
       busy(out, "attacking a copy of the model, then verifying it…");
       try {
@@ -359,7 +363,7 @@
           h("span", { text: res.label + (cur.min === undefined ? "" : " · " + fmtS(cur, Number(res.strength))) }),
           h("span", { class: "faint mono", text: res.n_flipped + "/" + res.n_code + " flipped" + (res.acc_after !== null ? " · acc " + pct(res.acc_after) : "") }),
           h("button", { class: "btn ghost sm", type: "button", text: "X-ray", onclick: () => { S.xrayModel = res.lab_model; S.xrayKey = "ours"; S.xrayAuto = true; location.hash = "#labs/xray"; } })));
-      } catch (e) { toast(e.message, "bad"); }
+      } catch (e) { out.replaceChildren(h("div", { class: "rcard bad" }, h("p", { class: "rwhy", text: e.message }))); }
     };
     target().replaceChildren(
       labHead("Attack lab", "Play the thief. Pick an attack and how hard to push it; the lab damages a copy of a signed model (your real models are never changed), then runs the real verifier on it and shows which code bits flipped."),
@@ -510,7 +514,7 @@
               h("div", { class: "sizes" }, all.map((x) => h("div", { class: "srow2" }, h("span", { text: x.n }),
                 h("div", { class: "mbar" }, h("i", { class: x.q ? "a" : "b", style: { width: Math.max(1.5, x.sig / mx * 100) + "%" } })),
                 h("b", { class: "mono", text: x.sig + " B" }), h("small", { class: x.q ? "okc" : "badc", text: x.q ? "quantum-safe" : "breakable by a large quantum computer" })))))));
-      } catch (e) { toast(e.message, "bad"); }
+      } catch (e) { out.replaceChildren(h("div", { class: "rcard bad" }, h("p", { class: "rwhy", text: e.message }))); }
     };
     const field = (id, label, el) => h("div", { class: "field", style: { gridColumn: "1 / -1" } }, h("label", { for: id, text: label }), el);
     target().replaceChildren(
@@ -741,7 +745,7 @@
       chart("Compressing weights to fewer bits", "From 8 bits down to 2. Error correction repairs the damage down to 3 bits.", { series: [fam("", /^quant_pt_(\d+)$/, "per tensor")], xLabel: "bits per weight", yLabel: "accuracy", ref }),
       chart("Noise aimed at the watermark layer", "Even noise aimed straight at the watermark layer does not remove it.", { series: [fam("", /^noise_carrier_s([\d.]+)$/, "carrier")], xLabel: "noise strength", yLabel: "accuracy", ref }),
     ];
-    const base = R.baseline, wm = R.phase4.find((x) => x.config === "rs32/features.6.0/lam20");
+    const base = R.baseline.filter((b) => Number.isFinite(b.acc)), wm = R.phase4.find((x) => x.config === "rs32/features.6.0/lam20");
     const bars = h("div", { class: "card" }, h("h3", { text: "Accuracy with and without the watermark" }),
       h("p", { class: "cap2", text: "Average test accuracy over 3 seeds for each setting. The chosen design is rs32, layer features.6.0, λ = 20." }),
       h("div", { class: "sizes" },
@@ -761,9 +765,14 @@
   function drawPhase7(body) {
     const p7 = S.results.phase7;
     const has = p7.configs.length || p7.plots.length;
+    const regen = (task) => async () => {   // run, then redraw the tables and plots with the result card kept on top
+      const box = h("div"); body.prepend(box);
+      const j = await runInto(box, task, {}, { expect: "PASSED" });
+      if (j && j.status === "passed") { S.results = await api("/api/results").catch(() => S.results); drawPhase7(body); body.prepend(box); }
+    };
     const runBtns = h("div", { class: "presets" }, h("span", { class: "faint", text: "Regenerate from your runs:" }),
-      h("button", { class: "btn sm", type: "button", text: "Collect runs (P7.1)", onclick: async () => { const box = h("div"); body.prepend(box); await runInto(box, "p7.collect", {}, { expect: "PASSED" }); } }),
-      h("button", { class: "btn sm", type: "button", text: "Make plots", onclick: async () => { const box = h("div"); body.prepend(box); await runInto(box, "p7.plots", {}, { expect: "PASSED" }); P.route(); } }));
+      h("button", { class: "btn sm", type: "button", text: "Collect runs (P7.1)", onclick: regen("p7.collect") }),
+      h("button", { class: "btn sm", type: "button", text: "Make plots", onclick: regen("p7.plots") }));
     if (!has) { body.replaceChildren(runBtns, h("div", { class: "empty", text: "No Phase 7 results yet. Click “Collect runs”, then “Make plots”." })); return; }
     const cols = ["ecc", "layer", "lam", "n_runs", "mean_acc", "mean_diff", "min_margin", "decoded_errors_total"];
     const nice = { ecc: "ECC", layer: "Layer", lam: "λ", n_runs: "Runs", mean_acc: "Accuracy", mean_diff: "Cost (pts)", min_margin: "Min margin", decoded_errors_total: "Decoded errors" };

@@ -84,7 +84,7 @@ TASKS = [
          where="local", needs=["torch"], what="Prints the torch version, GPU availability and loads one CIFAR-10 image (downloads it into data/ if missing).",
          argv=["tests/test_torch.py"]),
     dict(id="tests.all", phase=0, title="Every unit test", cost="seconds", est="15 s", where="local", needs=["pytest", "torch", "liboqs"],
-         what="pytest over tests/ (phases 2 to 6). Expect 42 passed.", argv=["-m", "pytest", "tests", "-q"]),
+         what="pytest over tests/ (phases 2 to 7 and pqctl). Every test must pass.", argv=["-m", "pytest", "tests", "-q"]),
 
     # ---------------- Phase 1
     dict(id="p1.train", phase=1, title="Train the baseline models", cost="hours", est="~8.5 min per seed on a T4, hours on CPU",
@@ -158,7 +158,7 @@ TASKS = [
          argv=["-m", "verify.verify_model"],
          params=[_model("runs/wm_v1/lam20_n256_rs32/seed0/model.pt"),
                  _p("allow_short", "Legacy model (allow short payload)", "bool", False, "--allow-short"),
-                 _p("n_bits", "Bits (blank = from manifest)", "str", "", "--n-bits")]),
+                 _p("n_bits", "Bits (blank = from manifest)", "int", "", "--n-bits")]),
     dict(id="p5.negative", phase=5, title="Negative-case suite", cost="minutes", est="1-2 min", where="local",
          needs=["torch", "liboqs", "keys", "mallory"], what="8 cases per seed: wrong keys, tampered manifest, unmarked and Mallory's models must be rejected for the right reason.",
          argv=["-m", "experiments.phase5_negative_cases"],
@@ -224,8 +224,8 @@ TASKS = [
          what="Edits a temporary copy of the signed release the way you choose, then verifies it. The real release is never touched.",
          argv=["-m", "pqctl.actions.tamper_lab"],
          params=[_p("developer_id", "Developer id", "str", "", "--developer-id"),
-                 _p("width", "Model width", "str", "", "--width"),
-                 _p("num_samples", "Number of training images", "str", "", "--num-samples"),
+                 _p("width", "Model width", "int", "", "--width"),
+                 _p("num_samples", "Number of training images", "int", "", "--num-samples"),
                  _p("flip_root", "Change 1 character of the dataset fingerprint", "bool", False, "--flip-root"),
                  _p("flip_signature", "Change 1 character of the signature", "bool", False, "--flip-signature"),
                  _p("flip_payload", "Change 1 character of payload.hex", "bool", False, "--flip-payload"),
@@ -242,7 +242,7 @@ BY_ID = {t["id"]: t for t in TASKS}
 
 PIPELINES = [
     {"id": "check-all", "title": "Run every check", "est": "~5 min", "stop_on_fail": False,
-     "what": "Re-proves phases 0 to 7 from what is already in the repo: tests, signature, tamper demo, every watermark, negative cases, attack-suite compatibility, results tables and Phase 7 plots. No training, nothing overwritten.",
+     "what": "Re-proves phases 0 to 7 from what is already in the repo: tests, signature, tamper demo, every watermark, negative cases, attack-suite compatibility, results tables and Phase 7 plots. No training; models, keys and the release are never changed (only the results tables and plots are rewritten).",
      "steps": ["p0.mldsa", "tests.all", "p2.verify_release", "p2.tamper", "p3.check", "p3.verify_legacy", "p4.verify_all",
                "p5.verify", "p5.negative", "p6.compat", "p6.summarize", "p7.collect", "p7.plots"]},
     {"id": "phase6", "title": "Phase 6 attack run (local)", "est": "~2 h on CPU", "stop_on_fail": True,
@@ -283,6 +283,8 @@ def _as_list(v):
 
 def clean_params(task, given, settings, root):
     """Validate user values against the task's param specs. Unknown names are rejected."""
+    if given is not None and not isinstance(given, dict):
+        raise ParamError("options must be a name -> value object")
     vals = defaults(task, settings)
     specs = {p["name"]: p for p in task.get("params", [])}
     for k, v in (given or {}).items():

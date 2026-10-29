@@ -65,6 +65,8 @@ def sparsity_of(model):
 @torch.no_grad()
 def quantize(model, bits, per_channel=False):
     """Symmetric uniform quantize-dequantize of conv/linear weights (BatchNorm left in float, as in most deployments)."""
+    if bits < 2:
+        raise ValueError("quantize needs at least 2 bits (1 bit leaves no levels and gives NaN weights)")
     m = clone_model(model)
     qmax = 2 ** (bits - 1) - 1
     for w in weight_tensors(m):

@@ -5,13 +5,20 @@ from embedding.keys import bit_error_rate
 from embedding.projection import ProjectionWatermark, get_weight
 
 
-def load_state_dict(path):
-    """Tolerant loader: accepts a raw state_dict, {'state_dict': ...}, or a pickled nn.Module."""
+def load_state_dict(path, allow_pickle=False):
+    """Tolerant loader: accepts a raw state_dict, {'state_dict': ...}, or (allow_pickle=True) a pickled nn.Module.
+
+    The verifier reads models from people it does not trust, and a full unpickle can run any code, so only
+    plain tensors are loaded unless allow_pickle=True is passed for a file you made yourself.
+    """
     try:
         obj = torch.load(path, map_location="cpu", weights_only=True)
     except TypeError:                      # very old torch without weights_only
         obj = torch.load(path, map_location="cpu")
-    except Exception:                      # whole-module pickle written by your own code
+    except Exception as e:                 # whole-module pickle (or not a checkpoint at all)
+        if not allow_pickle:
+            raise ValueError("not a plain weights file (%s); refusing to unpickle it, since that can run code"
+                             % type(e).__name__) from e
         obj = torch.load(path, map_location="cpu", weights_only=False)
     if isinstance(obj, torch.nn.Module):
         obj = obj.state_dict()
