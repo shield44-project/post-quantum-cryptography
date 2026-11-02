@@ -6,6 +6,7 @@ quantize   : simulated uniform symmetric quantization (per tensor or per output 
 half       : float16 round trip of every parameter
 rescale    : function-preserving per-output-channel rescaling of conv + BatchNorm statistics
 permute    : function-preserving reordering of channels (neuron permutation)
+scale_in   : function-preserving scaling of the channels feeding the carrier (Phase 6b; optionally after a permutation)
 """
 import math
 
@@ -132,6 +133,25 @@ def _permute_block_outputs(model, block_idx, perm):
         c = conv.out_channels
         w = lin.weight.view(lin.out_features, c, -1)
         lin.weight.copy_(w[:, perm, :].reshape(lin.out_features, -1))
+
+
+@torch.no_grad()
+def scale_carrier_inputs(model, max_scale, seed, layer="features.6.0.weight"):
+    """Function-preserving scaling of the channels FEEDING the carrier conv (the scaling half of neural structural
+    obfuscation, Yan et al. 2023). Channel c of the previous block is multiplied by s_c (log-uniform in
+    [1/max_scale, max_scale]) through its BatchNorm weight and bias; ReLU and MaxPool commute with s_c > 0, and the
+    carrier's input weights are divided by s_c, so the output is unchanged while every carrier block v_c becomes v_c / s_c."""
+    m = clone_model(model)
+    g = torch.Generator().manual_seed(seed)
+    k = carrier_block_index(m, layer)
+    if k == 0:
+        raise ValueError("carrier is the first block; its inputs are image channels")
+    bn, conv = conv_blocks(m)[k - 1][1], conv_blocks(m)[k][0]
+    s = torch.exp((torch.rand(conv.in_channels, generator=g) * 2 - 1) * math.log(max_scale)).to(conv.weight.device)
+    bn.weight.mul_(s)
+    bn.bias.mul_(s)
+    conv.weight.div_(s.view(1, -1, 1, 1))
+    return m
 
 
 def permute_channels(model, which, seed, layer="features.6.0.weight"):

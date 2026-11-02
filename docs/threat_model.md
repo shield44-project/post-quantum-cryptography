@@ -32,6 +32,33 @@ specific developer from a specific, committed dataset.
 - It does not defend against distillation (out of scope).
 - It requires white-box access to the weights.
 
+## Measured against the Remover (Phase 6 and 6b)
+- Accidental lifecycle changes (fine-tuning, pruning, quantization, noise, output-channel
+  rescaling) never removed the mark while the model stayed useful.
+- Function-preserving obfuscation (Phase 6 found it; Phase 6b fixes it): reordering or
+  positively rescaling the channels that feed the carrier layer leaves the model's answers
+  identical but scrambles the carrier. The verifier now undoes both (Hungarian re-alignment,
+  a linear program for the scales) and still demands an exact 256-bit match. The search only
+  runs when a counting bound proves it cannot fit a codeword the model never carried
+  (2^-239 for rs32); 724 null models in `experiments/phase6b_false_accept.py` gave 0 false
+  accepts.
+- Overwriting with a second watermark on the same layer still destroys the exact payload.
+  The verifier then reports DAMAGED: the code values still agree with our signed codeword
+  far beyond chance (below 2^-64 for an unmarked model, counted without any search). This
+  is evidence of origin, not a proof of the exact payload.
+- Not yet tested: adding dummy neurons (it changes the parameter count, so the signed
+  manifest check rejects the model, which still counts as a removal), overwriting a
+  different layer, much longer fine-tuning, and attacks on the rs16 models.
+
+## Operational notes
+- The verifier needs the secret watermark key. Any auditor who receives it learns where
+  the mark lives and could target it, so it is shared only with trusted auditors.
+- During development the team shared the keys (including the ML-DSA secret key) over a
+  chat app and chose to keep them. A real release would need a fresh key pair.
+- `created_utc` in the manifest is chosen by the signer. Nothing proves who signed first,
+  so a priority dispute (two developers each with a valid signature) needs a trusted
+  timestamp (RFC 3161) or a transparency log. Not implemented.
+
 ## Assumptions
 - The developer's private key is kept secret.
 - The watermark key (seed) is shared only with trusted auditors.

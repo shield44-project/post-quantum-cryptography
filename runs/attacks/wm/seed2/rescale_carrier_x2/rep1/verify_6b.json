@@ -1,0 +1,15 @@
+{
+  "verdict": "VERIFIED",
+  "wm_read": "PASS",
+  "payload_match": "PASS",
+  "min_margin": 2.57,
+  "corrected": 0,
+  "erasures": 0,
+  "n_values": 512,
+  "ecc": "rs32",
+  "n_bits": 256,
+  "layer": "features.6.0.weight",
+  "mode": "mean",
+  "returncode": 0,
+  "flip_rate": 0.0
+}

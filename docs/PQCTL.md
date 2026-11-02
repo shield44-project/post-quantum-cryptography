@@ -85,6 +85,7 @@ Exit code is 0 only if everything passed, so it also works in scripts and CI.
 |---|---|---|
 | `check-all` | ML-DSA test, all unit tests, release signature, tamper demo, Phase 3 check, Phase 3 legacy verify, every Phase 4 model, one verify, negative cases, Phase 6 compat, Phase 6 tables, Phase 7 collect + plots | ~5 min, nothing trained; only results/ tables and plots are rewritten |
 | `phase6` | compat, weight attacks, control attacks, verify every attacked model, tables | ~2 h on CPU, skips finished work |
+| `phase6b` | the new scaling attacks, re-verify every attacked copy with the permutation and scaling defence, Phase 6b tables, false-accept stress test | ~30 min on CPU; Phase 6 reports are kept |
 | `rebuild` | trains baselines, Phase 3 and 4 models, Mallory's stand-in, every attack (training ones too), then the checks | many hours on CPU; use Colab cells for the training steps |
 
 ## Steps that need a GPU

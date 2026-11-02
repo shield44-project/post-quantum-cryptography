@@ -530,3 +530,8 @@ h1.big { font-size: clamp(28px, 3.6vw, 42px); line-height: 1.08; letter-spacing:
 .lab-head { display: flex; flex-direction: column; gap: 6px; }
 .lab-head h2 { font-size: 20px; }
 .mini .big.warnc { color: var(--warn); }
+/* Phase 6b: DAMAGED = exact payload lost, signed codeword still provably present */
+.verdict-big.warn { border-color: rgba(255,181,71,.35); background: var(--warn-bg); } .verdict-big.warn .g { background: var(--warn); color: #1a1000; }
+.rcard.warn { border-color: rgba(255,181,71,.35); background: linear-gradient(0deg, var(--warn-bg), var(--warn-bg)), var(--surface); }
+.rcard.warn .rword { color: var(--warn); }
+.mini .big.warn { color: var(--warn); }

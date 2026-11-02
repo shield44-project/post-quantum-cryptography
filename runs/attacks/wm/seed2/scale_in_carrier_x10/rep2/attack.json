@@ -1,0 +1,16 @@
+{
+  "source": "wm",
+  "seed": 2,
+  "attack_id": "scale_in_carrier_x10",
+  "family": "scale_in",
+  "params": {
+    "max_scale": 10,
+    "permute": false
+  },
+  "rep": 2,
+  "clean_acc": 0.8252,
+  "attacked_acc": 0.8252,
+  "acc_drop": 0.0,
+  "layer": "features.6.0.weight",
+  "seconds": 21.97204041481018
+}

@@ -33,7 +33,7 @@
     j.lines = lines; j.id = id;
     return j;
   }
-  const verdictLine = (j) => { const v = (j.lines || []).find((l) => /^(VERIFIED|REJECTED)\s*$/.test(l.trim())); return v ? v.trim() : null; };
+  const verdictLine = (j) => { const v = (j.lines || []).find((l) => /^(VERIFIED|REJECTED|DAMAGED)\s*$/.test(l.trim())); return v ? v.trim() : null; };
   function wordOf(j) {
     if (j.result && j.result.error) return "ERROR";
     const v = (j.result && j.result.verdict) || verdictLine(j);
@@ -57,7 +57,7 @@
     if (missing) why = "This computer's Python is " + missing + ". Open Environment to fix it, then try again.";
     else if (j.result && j.result.error) why = j.result.error;
     else if (!why) why = good ? "Every check passed." : firstFail ? "Stopped at: " + firstFail[1] + (firstFail[2] ? " (" + firstFail[2] + ")" : "") : "";
-    return h("div", { class: "rcard " + (good ? "ok" : "bad") },
+    return h("div", { class: "rcard " + (good ? "ok" : word === "DAMAGED" ? "warn" : "bad") },
       h("div", { class: "rtop" },
         h("span", { class: "rword", text: word }),
         opts.expect ? h("span", { class: word === opts.expect ? "match" : "nomatch", text: word === opts.expect ? "as expected" : "expected " + opts.expect }) : null,
@@ -308,6 +308,8 @@
     { id: "permute_out", group: "Deliberate tricks", name: "Shuffle layer outputs", sub: "same answers", p6: () => "permute_out_carrier" },
     { id: "permute_in", group: "Deliberate tricks", name: "Shuffle layer inputs", sub: "same answers", p6: () => "permute_in_carrier" },
     { id: "permute_all", group: "Deliberate tricks", name: "Shuffle every layer", sub: "same answers", p6: () => "permute_all" },
+    { id: "scale_in", group: "Deliberate tricks", name: "Rescale layer inputs", sub: "same answers", min: 1.5, max: 100, step: 0.5, def: 10, unit: "× max", p6: (s) => "scale_in_carrier_x" + s },
+    { id: "permute_scale", group: "Deliberate tricks", name: "Shuffle and rescale", sub: "same answers", min: 1.5, max: 100, step: 0.5, def: 10, unit: "× max", p6: (s) => "permute_scale_in_x" + s },
     { id: "overwrite", group: "Deliberate tricks", name: "Overwrite with a fake mark", sub: "retrain, slow on CPU", min: 1, max: 10, step: 1, def: 2, unit: "epochs", slow: true, p6: () => "overwrite_128bit" },
   ];
 
@@ -358,8 +360,9 @@
         if (!j.result || j.result.error) { out.replaceChildren(resultCard(j)); return; }
         const res = j.result;
         if (!labModels.includes(res.lab_model)) labModels.unshift(res.lab_model);
-        out.replaceChildren(resultCard(j, { why: res.verdict === "VERIFIED" ? "The watermark survived: the attacked copy still proves it is ours." : "The watermark was removed or damaged beyond repair." }), attackView(res));
-        hist.prepend(h("div", { class: "hrow" }, h("span", { class: "chip " + (res.verdict === "VERIFIED" ? "ok" : "bad"), text: res.verdict }),
+        out.replaceChildren(resultCard(j, { why: res.verdict === "VERIFIED" ? "The watermark survived: the attacked copy still proves it is ours." :
+          res.verdict === "DAMAGED" ? "The exact payload is lost, but our signed code is still provably in the weights: the copy is still traceable to us." : "The watermark was removed or damaged beyond repair." }), attackView(res));
+        hist.prepend(h("div", { class: "hrow" }, h("span", { class: "chip " + (res.verdict === "VERIFIED" ? "ok" : res.verdict === "DAMAGED" ? "warn" : "bad"), text: res.verdict }),
           h("span", { text: res.label + (cur.min === undefined ? "" : " · " + fmtS(cur, Number(res.strength))) }),
           h("span", { class: "faint mono", text: res.n_flipped + "/" + res.n_code + " flipped" + (res.acc_after !== null ? " · acc " + pct(res.acc_after) : "") }),
           h("button", { class: "btn ghost sm", type: "button", text: "X-ray", onclick: () => { S.xrayModel = res.lab_model; S.xrayKey = "ours"; S.xrayAuto = true; location.hash = "#labs/xray"; } })));
@@ -379,7 +382,7 @@
         "A thief who copies a model may change it to erase the proof. These are the same attacks as the Phase 6 suite.",
         "Everyday changes (noise, pruning, compression, rescaling) are what happens when people shrink or tweak a model. The watermark should survive them while the model is still useful.",
         "Retraining slowly rewrites the weights; in Phase 6 even 10 epochs on all the data did not remove it.",
-        "Deliberate tricks: shuffling the channels feeding the watermark layer keeps the model's answers identical but scrambles the code, which is the main weakness and the next thing to fix. Overwriting with a second watermark also works, at an accuracy cost.",
+        "Deliberate tricks: shuffling or rescaling the channels feeding the watermark layer keeps the model's answers identical but scrambles the code. Since Phase 6b the verifier undoes both (it re-aligns and re-scales the channels) and still demands an exact match. Overwriting with a second watermark destroys the exact payload, but the verifier reports DAMAGED: our code is still there far beyond chance.",
         "The grey line under the controls shows what the full Phase 6 suite measured for the same setting, across 3 models."]));
     setAttack(cur);
     if (hist.childElementCount === 0) hist.append(h("p", { class: "faint", text: "Attacks you run appear here, with a link to X-ray each attacked copy." }));
@@ -399,7 +402,7 @@
           meter("Model accuracy", res.acc_clean, res.acc_after, (v) => pct(v), "measure accuracy to see this"),
           meter("Weakest score (margin)", res.clean_margin, res.margin, (v) => v.toFixed(2), "", Math.max(res.clean_margin, res.margin))),
         h("p", { class: "cap2", text: drop === null ? "Tick “Also measure accuracy” to see whether the attacked model is still useful." :
-          drop <= 5 ? "Accuracy dropped " + drop.toFixed(1) + " points, so the model is still useful. " + (res.verdict === "VERIFIED" ? "And the watermark survived." : "And the watermark is gone: this counts as a successful removal.")
+          drop <= 5 ? "Accuracy dropped " + drop.toFixed(1) + " points, so the model is still useful. " + (res.verdict === "VERIFIED" ? "And the watermark survived." : res.verdict === "DAMAGED" ? "The exact payload is gone, but the copy is still provably ours, so this is not a removal." : "And the watermark is gone: this counts as a successful removal.")
             : "Accuracy dropped " + drop.toFixed(1) + " points: the model is ruined, so " + (res.verdict === "VERIFIED" ? "the watermark even outlived the model." : "losing the watermark here does not help a thief.") }),
         h("div", { class: "kv" }, kv("Attack", res.label), kv("Parameters", JSON.stringify(res.params)), kv("Attacked copy", res.lab_model), kv("Time", res.seconds + " s"))));
   }
@@ -655,7 +658,8 @@
       P.stat(done + "/" + o.phases.length, "phases with results"),
       P.stat(base.length ? pct(base.reduce((a, b) => a + b, 0) / base.length) : "-", "accuracy without watermark"),
       P.stat(p4 ? fix(p4.diff_pts) + " pts" : "-", "cost of the watermark"),
-      P.stat(t ? t.wm_verified + "/" + t.wm_runs : "-", "attacked copies still verified", "ok"),
+      P.stat(t ? t.wm_verified + "/" + t.wm_runs : "-", "attacked copies verified exactly", "ok"),
+      t && t.wm_damaged ? P.stat(String(t.wm_damaged), "more still traced (DAMAGED)", "ok") : null,
       P.stat(t ? t.base_false_accepts + "/" + t.base_runs : "-", "unsigned models accepted", t && !t.base_false_accepts ? "ok" : "bad"),
       P.stat(t ? String(t.removed_types) : "-", "attack types that removed it", t && t.removed_types ? "bad" : "ok"));
     const track = h("div", { class: "track" },
@@ -753,7 +757,7 @@
         R.phase4.slice().sort((a, b) => b.mean_wm_acc - a.mean_wm_acc).map((c) => barRow(c.config + (c === wm ? "  ← chosen" : ""), c.mean_wm_acc, c === wm ? "a" : "b"))));
     const t = R.phase6.totals;
     const fams = {};
-    for (const r of sum.filter((r) => r.family !== "control")) { const f = (fams[r.family] = fams[r.family] || { held: 0, removed: 0, ruined: 0 }); f[P.outcome(r)[1] === "held" ? "held" : P.outcome(r)[1] === "removed" ? "removed" : "ruined"]++; }
+    for (const r of sum.filter((r) => r.family !== "control")) { const f = (fams[r.family] = fams[r.family] || { held: 0, removed: 0, ruined: 0 }); const w = P.outcome(r)[1]; f[w === "held" || w === "damaged" ? "held" : w === "removed" ? "removed" : "ruined"]++; }
     const stack = h("div", { class: "card" }, h("h3", { text: "Every attack type, by outcome" }),
       h("p", { class: "cap2", text: (t ? t.wm_verified + " of " + t.wm_runs + " attacked copies verified. " : "") + "Each square is one attack type: green = watermark held, red = removed while the model still worked, amber = lost only by ruining the model." }),
       h("div", { class: "famrows" }, Object.entries(fams).map(([k, v]) => h("div", { class: "famrow" }, h("span", { class: "mono", text: k }),

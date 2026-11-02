@@ -1,0 +1,16 @@
+{
+  "source": "baseline",
+  "seed": 0,
+  "attack_id": "scale_in_carrier_x100",
+  "family": "scale_in",
+  "params": {
+    "max_scale": 100,
+    "permute": false
+  },
+  "rep": 0,
+  "clean_acc": 0.8612,
+  "attacked_acc": 0.8612,
+  "acc_drop": 0.0,
+  "layer": "features.6.0.weight",
+  "seconds": 21.061947345733643
+}

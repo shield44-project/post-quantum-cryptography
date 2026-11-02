@@ -8,8 +8,8 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776ab?logo=python&logoColor=white)](#quick-start)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.x-ee4c2c?logo=pytorch&logoColor=white)](https://pytorch.org)
 [![liboqs](https://img.shields.io/badge/crypto-liboqs--python-0a7bbb)](https://github.com/open-quantum-safe/liboqs-python)
-[![Tests](https://img.shields.io/badge/tests-63%20passing-2ea44f)](#tests)
-[![Status](https://img.shields.io/badge/phases-0%E2%80%936%20done%2C%207%20in%20progress-orange)](#roadmap)
+[![Tests](https://img.shields.io/badge/tests-76%20passing-2ea44f)](#tests)
+[![Status](https://img.shields.io/badge/phases-0%E2%80%936b%20done%2C%207%20in%20progress-orange)](#roadmap)
 
 *Sign a model's origin with a post-quantum signature, hide the proof in its weights,<br>and let anyone check it with one command: **VERIFIED** or **REJECTED**.*
 
@@ -27,7 +27,7 @@
 | **Proof inside the weights** | A **256-bit payload** derived from the signed manifest is embedded *in the weights* during training, so stripping a signature file does not remove the proof. |
 | **Dataset commitment** | All **50,000 CIFAR-10 training images** are committed with a single **Merkle root**: change one pixel, label or image order and verification fails. |
 | **Error correction** | **Reed-Solomon (rs32)** protects the payload: 256 bits become 512 code values, so damaged bytes can be repaired. |
-| **Attacked 216 times** | **43 attack configurations** (noise, pruning, quantization, fine-tuning, rescaling, permutation, overwriting) on 3 models: **177 of 216 copies still verified**. |
+| **Attacked 252 times** | **47 attack configurations** (noise, pruning, quantization, fine-tuning, rescaling, permutation, channel scaling, overwriting) on 3 models: **0 successful removals**; 231 copies verified exactly, 20 still traced. |
 | **Zero false accepts** | **0 of 18** unwatermarked baseline models were ever accepted, attacked or not. |
 | **One control centre** | `pqctl`: a local web dashboard and terminal tool that runs every phase, plus interactive labs (Watermark X-ray, Attack lab, Tamper lab, Signing lab). |
 
@@ -97,7 +97,7 @@ SmallCNN (160,234 parameters) on CIFAR-10, 30 epochs, accuracy differences paire
 
 Every chosen-design model decodes with **0 bit errors** after correction (minimum margin 2.24).
 
-### Robustness: 43 attacks × 3 models
+### Robustness: 47 attacks × 3 models
 
 A removal only counts as a **success** if the verifier stops saying VERIFIED **and** the model is still useful (accuracy within 5 points of the clean model). Destroying a model to kill its mark proves nothing.
 
@@ -112,10 +112,13 @@ A removal only counts as a **success** if the verifier stops saying VERIFIED **a
 | Prune 50% + fine-tune | 3 epochs | ✅ held |
 | Channel rescaling (function-preserving) | ×10 on every layer | ✅ held |
 | Shuffle the carrier's **output** channels | all 9 runs | ✅ held |
-| Shuffle the carrier's **input** channels | — | ❌ **removed** |
-| Overwrite with a second 128-bit watermark | — | ❌ **removed** (−3.7 pts) |
+| Shuffle the carrier's **input** channels (removed it in Phase 6) | all 9 runs: re-aligned by the verifier | ✅ held |
+| Rescale the carrier's input channels (new in 6b) | ×100, and shuffle + ×10 | ✅ held |
+| Overwrite with a second watermark, 128 or 512 bits (removed it in Phase 6) | exact payload lost, our code still at 75-91% agreement | ✅ traced (DAMAGED) |
 
-**Totals:** **177 / 216** attacked copies verified · **0 / 18** false accepts on unmarked models · **4** attack types removed the mark while keeping the model useful (input-channel and all-layer permutation, and 128- and 512-bit overwrite). See [`docs/phase6_results.md`](docs/phase6_results.md) for the full table.
+**Totals (Phase 6b verifier):** **231 / 252** attacked copies verified exactly, **20** more traced as DAMAGED, **1** rejected (2-bit quantization, accuracy 9.5%) · **0 successful removals** (Phase 6 had 4 attack types) · **0 / 54** false accepts on unmarked models, plus **0 / 724** in the false-accept stress test. Full tables: [`docs/phase6b_results.md`](docs/phase6b_results.md) (now) and [`docs/phase6_results.md`](docs/phase6_results.md) (before the defence).
+
+**How Phase 6b closes the gaps.** Shuffling or positively rescaling the channels that feed the carrier leaves the model's answers identical but scrambles the carrier. The verifier now undoes both (Hungarian re-alignment and a small linear program, `embedding/align.py`) and still demands an exact 256-bit match. That search only runs when a counting bound (Cover's theorem) proves it cannot fit a codeword the model never carried: below 2⁻²³⁹ for rs32. When an overwrite destroys the exact payload, the verifier counts how many code values still agree with the signed codeword in the model's own channel order. Above 358 of 512 the chance for an unmarked model is below 2⁻⁶⁴, so it reports **DAMAGED**: the copy is provably derived from ours.
 
 <details>
 <summary><b>Show the plots</b></summary>
@@ -269,8 +272,8 @@ Full guide: [`docs/PQCTL.md`](docs/PQCTL.md).
 
 This project is pitched to mentors and faculty, so its claims must be defensible. Here is what it does **not** do:
 
-- **Channel permutation removes the watermark.** Shuffling the channels that feed the carrier layer keeps the model's answers identical but scrambles the carrier vector. This is the main open weakness (planned: Phase 6b).
-- **Overwriting works, at a cost.** Fine-tuning a second watermark into the same layer removed ours with a 3.7-point accuracy drop.
+- **Overwriting still erases the exact payload.** Fine-tuning a second watermark into the same layer leaves the copy traceable (DAMAGED, at a 3.7-5.3 point accuracy cost) but not exactly verifiable. DAMAGED is statistical evidence of origin, not proof of the exact signed payload.
+- **Not yet tested:** dummy-neuron obfuscation (it changes the signed parameter count, so the model is rejected; that still counts as a removal), overwriting a different layer, much longer fine-tuning, and the rs16 models.
 - **Accuracy cost.** About 3 points with the chosen design (85.1% → 82.0%).
 - **White-box only.** The auditor needs the weights, not just API access.
 - **Not a data-quality proof.** The Merkle root proves *which* data was committed, not that it was clean, and not that the weights were actually trained on it.
@@ -290,7 +293,7 @@ verify/          verify_release (signature) and verify_model (the auditor's one 
 attacks/         Phase 6 suite: weight attacks, training attacks, registry, evaluation, summary
 experiments/     one script per phase "done when" check, Phase 7 collection and plots
 pqctl/           the control centre: tasks, runner, web server, lab actions, static dashboard
-tests/           63 unit and integration tests (no project keys needed)
+tests/           76 unit and integration tests (no project keys needed)
 release/         the signed manifest, payload.hex and public key
 mallory/         a second developer, for the negative cases
 runs/  results/  trained models, attacked copies, tables and plots
@@ -310,7 +313,7 @@ docs/            threat model, measured results, every command used, pqctl guide
 | 4 | Full 256-bit payload with Reed-Solomon, noise test | ✅ |
 | 5 | One-command verifier, Mallory, negative cases | ✅ |
 | 6 | 43-attack suite and results | ✅ |
-| 6b | Fix the weak spots: permutation defence, stronger fine-tuning | planned |
+| 6b | Permutation and scaling defence, DAMAGED verdict, false-accept stress test | ✅ |
 | 7 | Evaluation: λ, ECC and payload sweeps, more seeds, ResNet-18 | in progress (P7.1 done) |
 | 8 | Write-up, 3-minute live demo, mentor Q&A | planned |
 
@@ -319,7 +322,7 @@ docs/            threat model, measured results, every command used, pqctl guide
 ## Tests
 
 ```bash
-pytest                    # 63 tests: Merkle, manifest, ML-DSA, projection, ECC, verifier, attacks, pqctl
+pytest                    # 76 tests: Merkle, manifest, ML-DSA, projection, ECC, verifier, attacks, Phase 6b defence, pqctl
 ```
 
 The tests are self-contained: they make temporary keys, releases and small watermarked models, and never touch `keys/`, `release/` or `runs/`.

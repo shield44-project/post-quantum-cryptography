@@ -33,6 +33,10 @@ def _cfgs():
     add("permute_out_carrier", "permute", {"which": "out_carrier"}, repeats=3)
     add("permute_in_carrier", "permute", {"which": "in_carrier"}, repeats=3)
     add("permute_all", "permute", {"which": "all"}, repeats=3)
+    # ---- Phase 6b: the scaling half of neural structural obfuscation, alone and on top of a permutation
+    for m in (2, 10, 100):
+        add("scale_in_carrier_x%g" % m, "scale_in", {"max_scale": m, "permute": False}, repeats=3)
+    add("permute_scale_in_x10", "scale_in", {"max_scale": 10, "permute": True}, repeats=3)
     # ---- training attacks
     for e in (1, 5, 10):
         for lr in (0.001, 0.01):

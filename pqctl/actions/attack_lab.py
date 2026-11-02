@@ -29,6 +29,8 @@ ATTACKS = {
     "permute_out":   ("permute", lambda s: {"which": "out_carrier"}, "Shuffle the watermark layer's outputs", "", False),
     "permute_in":    ("permute", lambda s: {"which": "in_carrier"}, "Shuffle the channels feeding the watermark layer", "", False),
     "permute_all":   ("permute", lambda s: {"which": "all"}, "Shuffle channels in every layer", "", False),
+    "scale_in":      ("scale_in", lambda s: {"max_scale": s, "permute": False}, "Rescale the channels feeding the watermark layer", "max factor", False),
+    "permute_scale": ("scale_in", lambda s: {"max_scale": s, "permute": True}, "Shuffle and rescale the channels feeding the watermark layer", "max factor", False),
     "finetune":      ("finetune", lambda s: {"epochs": max(1, int(s)), "lr": 0.01, "frac": 0.2}, "Retrain on 20% of the data", "epochs", True),
     "overwrite":     ("overwrite", lambda s: {"n_bits": 128, "lam": 20.0, "epochs": max(1, int(s)), "lr": 0.01, "frac": 0.2},
                       "Write an attacker's own 128-bit watermark over it", "epochs", True),
@@ -36,7 +38,7 @@ ATTACKS = {
 
 # id -> (lowest, highest) strength that makes sense; attacks not listed ignore the strength
 LIMITS = {"noise_all": (0, 10), "noise_carrier": (0, 10), "prune_global": (0, 0.999), "prune_layer": (0, 0.999),
-          "quantize": (2, 16), "quantize_pc": (2, 16), "rescale": (1, 1000), "finetune": (1, 50), "overwrite": (1, 50)}
+          "quantize": (2, 16), "quantize_pc": (2, 16), "rescale": (1, 1000), "scale_in": (1, 1000), "permute_scale": (1, 1000), "finetune": (1, 50), "overwrite": (1, 50)}
 
 
 def check_strength(attack, s):
@@ -97,7 +99,11 @@ def main():
     ok, checks, s = verify_model(str(out_dir / "model.pt"), "keys/public_key.bin", "keys/watermark_key.bin", "release")
     for cname, passed, detail in checks:
         print("%s  %s%s" % ("PASS" if passed else "FAIL", cname, "  (" + detail + ")" if detail else ""))
-    print("VERIFIED" if ok else "REJECTED")
+    verdict = "VERIFIED" if ok else s.get("verdict", "REJECTED")
+    if s.get("evidence"):
+        e = s["evidence"]
+        print("EVIDENCE  %d of %d code values agree with the signed codeword (need %d; chance 2^%s)" % (e["agree"], e["of"], e["need"], e["log2_chance"]))
+    print(verdict)
 
     # bit picture, against the clean model's raw bits
     from embedding.ecc import get_code
@@ -118,7 +124,7 @@ def main():
     d = code.decode(logits)
     print("bits      : %d of %d code values flipped vs the clean model (%.1f%%)" % (sum(flipped), code.n_bits, 100.0 * sum(flipped) / code.n_bits))
     emit({"attack": args.attack, "label": label, "family": family, "params": params, "strength": args.strength, "unit": unit,
-          "model": str(src), "lab_model": str(out_dir / "model.pt"), "verdict": "VERIFIED" if ok else "REJECTED",
+          "model": str(src), "lab_model": str(out_dir / "model.pt"), "verdict": verdict, "evidence": s.get("evidence"), "undone": s.get("realigned"),
           "checks": [[c[0], bool(c[1]), c[2]] for c in checks], "acc_clean": acc_clean, "acc_after": acc_after,
           "flipped": flipped, "n_flipped": sum(flipped), "n_code": code.n_bits, "logits": [r(z) for z in logits],
           "clean_logits": [r(z) for z in clean_logits], "margin": r(min(abs(z) for z in logits)),

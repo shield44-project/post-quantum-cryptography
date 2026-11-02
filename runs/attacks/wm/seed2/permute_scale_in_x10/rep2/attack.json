@@ -1,0 +1,16 @@
+{
+  "source": "wm",
+  "seed": 2,
+  "attack_id": "permute_scale_in_x10",
+  "family": "scale_in",
+  "params": {
+    "max_scale": 10,
+    "permute": true
+  },
+  "rep": 2,
+  "clean_acc": 0.8252,
+  "attacked_acc": 0.8252,
+  "acc_drop": 0.0,
+  "layer": "features.6.0.weight",
+  "seconds": 21.236010313034058
+}

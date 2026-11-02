@@ -22,7 +22,7 @@ from attacks.common import (device, evaluate, load_model, save_model, seed_every
                             test_loader, train_loader)
 from attacks.train_attacks import finetune, overwrite_watermark, prune_then_finetune
 from attacks.weight_attacks import (add_noise, half_roundtrip, permute_channels, prune, quantize,
-                                    rescale_channels, sparsity_of)
+                                    rescale_channels, scale_carrier_inputs, sparsity_of)
 
 SOURCES = {
     "wm": "runs/wm_v1/lam20_n256_rs32/seed{seed}",
@@ -50,6 +50,9 @@ def apply_attack(cfg, model, seed, layer, dev, data_root):
         return rescale_channels(model, p["max_scale"], seed, layer if p["scope"] == "carrier" else None), extra
     if fam == "permute":
         return permute_channels(model, p["which"], seed, layer), extra
+    if fam == "scale_in":
+        base = permute_channels(model, "all", seed, layer) if p["permute"] else model
+        return scale_carrier_inputs(base, p["max_scale"], seed + 1, layer), extra
     if fam == "finetune":
         loader = train_loader(p["frac"], seed, data_root)
         return finetune(model, loader, p["epochs"], p["lr"], dev=dev), extra

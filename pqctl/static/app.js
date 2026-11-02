@@ -349,6 +349,7 @@
   function classify(line) {
     if (line.startsWith("$ ")) return "cmdline";
     if (/^\[(PASSED)\]|\bVERIFIED\b|\bPASSED\b|^PASS\b| passed\b/.test(line) && !/\bfailed\b|FAIL\b/.test(line)) return "ok";
+    if (/^DAMAGED$|^EVIDENCE\b/.test(line)) return "warn";
     if (/^\[(FAILED|CANCELLED)\]|REJECTED|\bFAILED\b|^FAIL\b|Traceback|Error\b|\bfailed\b/.test(line)) return "bad";
     if (/WARNING|^SKIP|skipped|NOTE/.test(line)) return "warn";
     return "";
@@ -516,7 +517,7 @@
     result.append(verdictBox("wait", "Pick a model", "The verifier checks, in order: the ML-DSA signature on the manifest, the model architecture, the hidden watermark, and that the decoded payload equals the signed hash."));
     target.replaceChildren(
       h("div", { class: "lab-head" }, h("h2", { text: "Verify a model" }),
-        h("p", { class: "muted lede2", text: "Pick any model in the project. Signed models should say VERIFIED; baselines, Mallory's models and successfully attacked copies should say REJECTED." })),
+        h("p", { class: "muted lede2", text: "Pick any model in the project. Signed models should say VERIFIED; baselines and Mallory's models should say REJECTED. DAMAGED means the exact payload is lost but the signed code is still provably in the weights (an overwrite attack's footprint)." })),
       h("div", { class: "verify" },
         h("div", { class: "card" }, search, list,
           h("div", { class: "field check", style: { paddingTop: "0" } }, att, h("label", { for: "attacked", text: "Include attacked copies (Phase 6)" })),
@@ -525,7 +526,7 @@
         h("div", { class: "card" }, result)));
   }
   function verdictBox(tone, word, text) {
-    return h("div", { class: "verdict-big " + tone }, h("div", { class: "g", text: tone === "ok" ? "OK" : tone === "bad" ? "NO" : "..." }),
+    return h("div", { class: "verdict-big " + tone }, h("div", { class: "g", text: tone === "ok" ? "OK" : tone === "bad" ? "NO" : tone === "warn" ? "!!" : "..." }),
       h("div", {}, h("div", { class: "w", text: word }), h("div", { class: "muted", text })));
   }
   async function waitVerify(id, box) {
@@ -540,13 +541,16 @@
         if (S.verifyJob !== id) return;
       }
     } catch (e) { box.replaceChildren(verdictBox("bad", "ERROR", e.message)); return; }
-    const verdict = lines.find((l) => /^(VERIFIED|REJECTED)\s*$/.test(l.trim()));
+    const verdict = lines.find((l) => /^(VERIFIED|REJECTED|DAMAGED)\s*$/.test(l.trim()));
     const settings = lines.find((l) => l.startsWith("watermark settings"));
     const checks = lines.filter((l) => /^(PASS|FAIL|WARNING)\s/.test(l));
     const ok = verdict && verdict.trim() === "VERIFIED";
+    const damaged = verdict && verdict.trim() === "DAMAGED";
     const firstFail = checks.find((c) => c.startsWith("FAIL"));
+    const ev = lines.find((l) => l.startsWith("EVIDENCE"));
     box.replaceChildren(
-      verdictBox(ok ? "ok" : "bad", verdict ? verdict.trim() : "ERROR", ok ? "Signature valid and the hidden payload matches the signed manifest." :
+      verdictBox(ok ? "ok" : damaged ? "warn" : "bad", verdict ? verdict.trim() : "ERROR", ok ? "Signature valid and the hidden payload matches the signed manifest." :
+        damaged ? "The exact payload could not be recovered, but " + ev.replace(/^EVIDENCE\s+/, "") + ". The model was derived from ours." :
         firstFail ? "Stopped at: " + firstFail.replace(/^FAIL\s+/, "") : "The verifier did not finish. Open the log for details."),
       settings ? h("div", { class: "mono faint", style: { fontSize: "12px" }, text: settings }) : null,
       checks.length ? h("div", { class: "checks" }, checks.map((c) => {
@@ -571,7 +575,8 @@
   }
   function outcome(r) {
     if ((r.removal_success || 0) > 0) return ["bad", "removed"];
-    if ((r.verified_rate ?? 1) < 1) return ["warn", "model ruined"];
+    if ((r.detected_rate ?? r.verified_rate ?? 1) < 1) return ["warn", "model ruined"];
+    if ((r.verified_rate ?? 1) < 1) return ["warn", "damaged"];      // Phase 6b: exact payload lost, still traced
     return ["ok", "held"];
   }
   function drawTab(body) {
@@ -585,7 +590,7 @@
       if (S.sort.key) rows = rows.slice().sort((a, b) => ((a[S.sort.key] ?? -1) > (b[S.sort.key] ?? -1) ? 1 : -1) * S.sort.dir);
       const th = (k, l, num) => h("th", { class: num ? "num" : "" }, h("button", { type: "button", text: l + (S.sort.key === k ? (S.sort.dir > 0 ? " ↑" : " ↓") : ""),
         onclick: () => { S.sort = { key: k, dir: S.sort.key === k ? -S.sort.dir : 1 }; drawTab(body); } }));
-      const filt = h("div", { class: "multi" }, ["all", "held", "removed", "model ruined"].map((f) => {
+      const filt = h("div", { class: "multi" }, ["all", "held", "damaged", "removed", "model ruined"].map((f) => {
         const cb = h("input", { type: "radio", name: "of", value: f }); cb.checked = S.filter === f;
         cb.addEventListener("change", () => { S.filter = f; drawTab(body); });
         return h("label", {}, cb, f);
@@ -602,7 +607,7 @@
             h("td", { class: "num" }, h("div", { style: { display: "flex", gap: "8px", alignItems: "center", justifyContent: "flex-end" } }, h("div", { class: "bar" }, h("i", { style: { width: (100 * r.verified_rate) + "%" } })), pct(r.verified_rate, 0))),
             h("td", { class: "num", text: pct(r.mean_acc) }), h("td", { class: "num", text: r.mean_drop === null ? "—" : fix(100 * r.mean_drop) }), h("td", { class: "num", text: r.mean_flip === null ? "—" : pct(r.mean_flip) }),
             h("td", {}, h("span", { class: "chip " + tone, text: word }))); })))),
-        h("p", { class: "muted", text: "Removed = the verifier stopped saying VERIFIED while accuracy dropped by at most 5 points. Model ruined = the watermark was lost only by destroying the model." }));
+        h("p", { class: "muted", text: "Removed = the verifier said REJECTED while accuracy dropped by at most 5 points (DAMAGED still proves ownership, so it is not a removal). Model ruined = the watermark was lost only by destroying the model." }));
     } else if (tab === "plots") {
       body.replaceChildren(R.phase6.plots.length ? h("div", { class: "plots" }, R.phase6.plots.map((p) => h("figure", {},
         h("img", { src: "/api/file?path=" + encodeURIComponent(p), alt: "Phase 6 plot " + p, loading: "lazy" }), h("figcaption", { text: p.split("/").pop() })))) :
@@ -730,6 +735,7 @@
     prune: "runs/attacks/wm/seed0/prune_global_0.5/rep0/model.pt",
     perm: "runs/attacks/wm/seed0/permute_in_carrier/rep0/model.pt",
     over: "runs/attacks/wm/seed0/overwrite_128bit/rep0/model.pt",
+    permscale: "runs/attacks/wm/seed0/permute_scale_in_x10/rep0/model.pt",
   };
   const TESTS = [
     { group: "Signature", items: [
@@ -747,9 +753,10 @@
       { label: "Weights compressed to 4 bits", task: "p5.verify", params: { model: M.q4 }, expect: "VERIFIED", note: "quant_pt_4" },
       { label: "Half of the weights deleted", task: "p5.verify", params: { model: M.prune }, expect: "VERIFIED", note: "prune_global_0.5" },
     ] },
-    { group: "Known weaknesses (Phase 6)", items: [
-      { label: "Channels shuffled", task: "p5.verify", params: { model: M.perm }, expect: "REJECTED", note: "permute_in_carrier: accuracy unchanged, mark scrambled" },
-      { label: "Overwritten with a second watermark", task: "p5.verify", params: { model: M.over }, expect: "REJECTED", note: "overwrite_128bit" },
+    { group: "Former weaknesses, fixed in Phase 6b", items: [
+      { label: "Channels shuffled", task: "p5.verify", params: { model: M.perm }, expect: "VERIFIED", note: "permute_in_carrier: the verifier re-aligns the channels" },
+      { label: "Channels shuffled and rescaled", task: "p5.verify", params: { model: M.permscale }, expect: "VERIFIED", note: "permute_scale_in_x10: re-aligned, then re-scaled" },
+      { label: "Overwritten with a second watermark", task: "p5.verify", params: { model: M.over }, expect: "DAMAGED", note: "overwrite_128bit: exact payload lost, our code still provably present" },
     ] },
   ];
 
@@ -788,7 +795,7 @@
       rows.push(row);
       return h("div", { class: "action" },
         h("div", { class: "lbl" }, h("b", { text: t.label }), h("small", { text: t.note }),
-          h("span", { class: "expect", style: { color: t.expect === "REJECTED" ? "var(--bad)" : "var(--ok)" }, text: "expected: " + t.expect })),
+          h("span", { class: "expect", style: { color: t.expect === "REJECTED" ? "var(--bad)" : t.expect === "DAMAGED" ? "var(--warn)" : "var(--ok)" }, text: "expected: " + t.expect })),
         btn, res);
     };
     const runAll = h("button", { class: "btn primary", type: "button", text: "Run all tests", onclick: async () => {
@@ -821,7 +828,7 @@
         await new Promise((res) => setTimeout(res, 400));
       }
     } catch (e) { box.replaceChildren(h("div", { class: "mini" }, h("span", { class: "big bad", text: "lost contact" }), h("span", { class: "why", text: e.message }))); return "ERROR"; }
-    const vline = lines.find((l) => /^(VERIFIED|REJECTED)\s*$/.test(l.trim()));
+    const vline = lines.find((l) => /^(VERIFIED|REJECTED|DAMAGED)\s*$/.test(l.trim()));
     const word = (j.result && j.result.verdict) || (vline ? vline.trim() : (j.verdict && /PASSED|FAILED/.test(j.verdict) ? j.verdict.replace(/.*(PASSED|FAILED).*/, "$1") : (j.verdict || j.status.toUpperCase())));
     const fail = lines.find((l) => l.startsWith("FAIL"));
     const missing = j.verdict && j.verdict.startsWith("missing") ? j.verdict : null;
@@ -837,7 +844,7 @@
     const good = word === "VERIFIED" || word === "PASSED";
     const why = good ? "All checks passed." : (fail ? "Stopped at: " + fail.replace(/^FAIL\s+/, "") : (j.verdict ? "Result: " + j.verdict : "Finished with status " + j.status + "."));
     box.replaceChildren(h("div", { class: "mini" },
-      h("span", { class: "big " + (good ? "ok" : "bad"), text: word }),
+      h("span", { class: "big " + (good ? "ok" : word === "DAMAGED" ? "warn" : "bad"), text: word }),
       expect ? h("span", { class: word === expect ? "match" : "nomatch", text: word === expect ? "as expected" : "expected " + expect }) : null,
       h("button", { class: "btn ghost sm", type: "button", text: "Full output", onclick: () => openDock(id) }),
       h("span", { class: "why", text: why })));

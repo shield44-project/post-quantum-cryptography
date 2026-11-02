@@ -1,6 +1,7 @@
 """Stage B: verify every attacked model with your Phase 5 verifier (LOCAL, needs liboqs).
 
     python -m attacks.evaluate_attacked --jobs 3
+    python -m attacks.evaluate_attacked --verify-file verify_6b.json --csv results/phase6b/attack_results.csv   # Phase 6b
 
 Reads  runs/attacks/**/attack.json, writes verify.json next to each model and one table:
 results/phase6/attack_results.csv.  Finished models are skipped, so you can run it again after adding more attacks.
@@ -23,6 +24,8 @@ def main():
     ap.add_argument("--csv", default="results/phase6/attack_results.csv")
     ap.add_argument("--jobs", type=int, default=2)
     ap.add_argument("--force", action="store_true")
+    ap.add_argument("--verify-file", default="verify.json",
+                    help="report name next to each model (Phase 6b uses verify_6b.json so the Phase 6 reports stay)")
     args = ap.parse_args()
 
     metas = sorted(Path(args.root).glob("*/seed*/*/rep*/attack.json"))
@@ -39,7 +42,7 @@ def main():
 
     def work(meta_path):
         d = meta_path.parent
-        out = d / "verify.json"
+        out = d / args.verify_file
         if out.exists() and not args.force:
             return
         meta = json.loads(meta_path.read_text())
@@ -55,7 +58,7 @@ def main():
 
     rows = []
     for p in metas:
-        v = p.parent / "verify.json"
+        v = p.parent / args.verify_file
         if not v.exists():
             continue
         row = json.loads(p.read_text())

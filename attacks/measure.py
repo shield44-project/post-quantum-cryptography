@@ -44,7 +44,7 @@ def parse_verifier_output(text: str) -> dict:
                         out[key] = float(f.group(1)) if key == "min_margin" else int(f.group(1))
             elif rest.startswith("extracted payload"):
                 out["payload_match"] = status
-    if lines and lines[-1].strip() in ("VERIFIED", "REJECTED"):
+    if lines and lines[-1].strip() in ("VERIFIED", "REJECTED", "DAMAGED"):
         out["verdict"] = lines[-1].strip()
     return out
 

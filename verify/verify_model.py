@@ -12,7 +12,13 @@ Checks, in order. A failing stage stops the run, because later stages trust earl
   3. watermark : n_bits == signed payload_bits, X @ v with the watermark key, then ECC decode
   4. payload   : decoded bits == SHA-256(signed manifest), all payload_bits of it
 VERIFIED only if every check passes (a decoder saying "ok" is never enough on its own).
-Exit code 0 = VERIFIED, 1 = REJECTED. --json prints the same result as one JSON object (for scripts and CI).
+Phase 6b additions:
+  - permutation defence: if the payload does not decode, the carrier's input channels are re-aligned
+    (embedding/align.py, Hungarian algorithm) and decoded again; only an exact match counts. --no-align turns it off.
+  - DAMAGED: signature and model are fine, the exact payload cannot be recovered, but the code values still agree
+    with the signed codeword far beyond chance (below 2^-64 for an unmarked model, counted WITHOUT re-alignment).
+    This is the overwrite attack's footprint: evidence that the mark was there, not a proof of the exact payload.
+Exit code 0 = VERIFIED, 1 = REJECTED, 2 = DAMAGED. --json prints the same result as one JSON object (for scripts and CI).
 Model files are loaded as plain tensors only: a checkpoint that needs a full unpickle is REJECTED, never executed.
 
 Watermark settings (ecc, n_bits, layer, mode) are not in the manifest (adding them would change
@@ -32,6 +38,7 @@ from crypto.manifest import payload_bits
 from verify.verify_release import verify_release
 
 DEFAULTS = {"ecc": "none", "n_bits": None, "layer": "features.6.0.weight", "mode": "mean"}  # None = signed payload_bits
+EXIT = {"VERIFIED": 0, "REJECTED": 1, "DAMAGED": 2}
 
 
 def resolve_settings(model_path, ecc=None, n_bits=None, layer=None, mode=None):
@@ -55,9 +62,12 @@ def resolve_settings(model_path, ecc=None, n_bits=None, layer=None, mode=None):
 
 
 def verify_model(model_path, public_key_path, wm_key_path, release_dir,
-                 ecc=None, n_bits=None, layer=None, mode=None, allow_short=False):
+                 ecc=None, n_bits=None, layer=None, mode=None, allow_short=False, align=True):
     """Return (ok, checks, settings). checks = list of (name, passed, detail).
-    allow_short=True accepts n_bits < signed payload_bits (legacy models); settings["warning"] then says so."""
+    allow_short=True accepts n_bits < signed payload_bits (legacy models); settings["warning"] then says so.
+    align=True (default) retries with the carrier's input channels re-aligned (Phase 6b permutation defence).
+    ok is True only for an exact match. settings["verdict"] is "DAMAGED" when exact verification failed but the
+    signed codeword is still statistically present (settings["evidence"]); otherwise use VERIFIED / REJECTED."""
     settings, source = resolve_settings(model_path, ecc, n_bits, layer, mode)
     settings["source"] = source
 
@@ -113,28 +123,70 @@ def verify_model(model_path, public_key_path, wm_key_path, release_dir,
             settings["warning"] = ("only %d of %d signed payload bits checked (--allow-short), weaker proof"
                                    % (n_req, signed_bits))
         code = get_code(settings["ecc"], n_req)
-        wm = ProjectionWatermark(load_key(wm_key_path), settings["layer"], code.n_bits, settings["mode"],
-                                 get_weight(model, settings["layer"]).shape)
-        _, logits = wm.extract(model)
+        weight = get_weight(model, settings["layer"])
+        wm = ProjectionWatermark(load_key(wm_key_path), settings["layer"], code.n_bits, settings["mode"], weight.shape)
+        _, raw_logits = wm.extract(model)
+        expected = payload_bits(manifest, n_req)          # the SIGNED manifest, never payload.hex
+        codeword = code.encode(expected)
+
+        def exact(dec):
+            return dec["ok"] and dec["bits"] == expected
+
+        logits, d, note = raw_logits, code.decode(raw_logits), ""
+        if not exact(d) and align and settings["mode"] == "mean" and n_req == signed_bits:
+            # Phase 6b: undo function-preserving channel permutation and/or scaling. Only an EXACT match counts, only
+            # for the full signed payload, and only when the code is long enough (embedding/align.py: undo_is_safe).
+            from embedding.align import candidate_readouts
+            from embedding.projection import carrier_vector
+
+            X = wm.matrix().astype("float64")
+            v = carrier_vector(weight.detach(), "mean").double().numpy()
+            for label, moved, vv in candidate_readouts(X, v, codeword, weight.shape):
+                if label == "raw":
+                    continue
+                z = (X @ vv).tolist()
+                d2 = code.decode(z)
+                if exact(d2):
+                    logits, d = z, d2
+                    note = ", after undoing channel %s%s" % (label, " (%d of %d channels moved)" % (moved, weight.shape[1]) if moved else "")
+                    settings["realigned"] = label
+                    break
         margin = min(abs(z) for z in logits)
-        d = code.decode(logits)
         if not add("watermark read (ecc %s, %d values)" % (settings["ecc"], code.n_bits), d["ok"],
-                   "min margin %.2f, corrected %d, erasures %d" % (margin, d["corrected"], d["erasures"])
+                   "min margin %.2f, corrected %d, erasures %d%s" % (margin, d["corrected"], d["erasures"], note)
                    if d["ok"] else "decoder failed; min margin %.2f" % margin):
+            _evidence(settings, raw_logits, codeword, n_req == signed_bits)
             return False, checks, settings
     except Exception as e:
         add("watermark extracted", False, "%s: %s" % (type(e).__name__, e))
         return False, checks, settings
 
-    # 4. payload: compare with the SIGNED manifest, never with payload.hex
-    expected = payload_bits(manifest, n_req)
+    # 4. payload: compare with the SIGNED manifest
     if len(d["bits"]) != len(expected):              # zip() below would silently compare only the overlap
         add("extracted payload length", False, "%d bits read, %d expected" % (len(d["bits"]), len(expected)))
         return False, checks, settings
     wrong = sum(int(a != b) for a, b in zip(d["bits"], expected))
-    add("extracted payload == SHA-256(signed manifest)", wrong == 0,
-        "%d bits match" % len(expected) if wrong == 0 else "%d of %d bits differ" % (wrong, len(expected)))
+    if not add("extracted payload == SHA-256(signed manifest)", wrong == 0,
+               "%d bits match" % len(expected) if wrong == 0 else "%d of %d bits differ" % (wrong, len(expected))):
+        _evidence(settings, raw_logits, codeword, n_req == signed_bits)
     return all(c[1] for c in checks), checks, settings
+
+
+def _evidence(settings, raw_logits, codeword, full_payload):
+    """Exact verification failed after the signature and model checks passed. Is the signed codeword still there?
+
+    Agreement is counted in the model's OWN channel order (no re-alignment: searching orders would inflate it), so for
+    a model that never carried this codeword it is Binomial(n, 1/2) and the printed chance is exact. Above the
+    2^-64 line the verdict is DAMAGED: not a proof of the exact payload, but statistical proof the mark was there."""
+    from embedding.align import EVIDENCE_LOG2_P, agreement, evidence_threshold, log2_tail
+
+    n = len(codeword)
+    if not full_payload or log2_tail(n, n) > EVIDENCE_LOG2_P:   # legacy short payloads cannot reach 2^-64
+        return
+    k, need = agreement(raw_logits, codeword), evidence_threshold(n)
+    settings["evidence"] = {"agree": k, "of": n, "need": need, "log2_chance": round(log2_tail(n, k), 1)}
+    if k >= need:
+        settings["verdict"] = "DAMAGED"
 
 
 def main():
@@ -150,24 +202,32 @@ def main():
     ap.add_argument("--allow-short", action="store_true",
                     help="accept legacy models that embed fewer bits than the manifest signs (weaker proof)")
     ap.add_argument("--json", action="store_true", help="print one JSON object instead of the text report")
+    ap.add_argument("--no-align", action="store_true", help="do not undo channel permutations (Phase 6 behaviour, for ablations)")
     args = ap.parse_args()
 
     # with --json, stdout must hold only the JSON: anything printed while verifying (liboqs prints a banner) goes to stderr
     with contextlib.redirect_stdout(sys.stderr if args.json else sys.stdout):
         ok, checks, s = verify_model(args.model, args.public_key, args.wm_key, args.release_dir,
-                                     args.ecc, args.n_bits, args.layer, args.mode, allow_short=args.allow_short)
+                                     args.ecc, args.n_bits, args.layer, args.mode, allow_short=args.allow_short,
+                                     align=not args.no_align)
+    verdict = "VERIFIED" if ok else s.get("verdict", "REJECTED")
+    code = EXIT[verdict]
     if args.json:
-        print(json.dumps({"verdict": "VERIFIED" if ok else "REJECTED", "model": str(args.model), "settings": s,
+        print(json.dumps({"verdict": verdict, "model": str(args.model), "settings": s,
                           "checks": [{"name": n, "passed": p, "detail": d} for n, p, d in checks]}, indent=2))
-        sys.exit(0 if ok else 1)
+        sys.exit(code)
     print("watermark settings (%s): ecc %s | n_bits %s | layer %s | mode %s"
           % (s["source"], s["ecc"], s["n_bits"], s["layer"], s["mode"]))
     for name, passed, detail in checks:
         print("%s  %s%s" % ("PASS" if passed else "FAIL", name, "  (" + detail + ")" if detail else ""))
     if s.get("warning"):
         print("WARNING  " + s["warning"])              # before the verdict: attacks/measure.py reads the last line
-    print("VERIFIED" if ok else "REJECTED")
-    sys.exit(0 if ok else 1)
+    e = s.get("evidence")
+    if e:
+        print("EVIDENCE  %d of %d code values agree with the signed codeword (need %d; chance for an unmarked model 2^%s)"
+              % (e["agree"], e["of"], e["need"], e["log2_chance"]))
+    print(verdict)
+    sys.exit(code)
 
 
 if __name__ == "__main__":

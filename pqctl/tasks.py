@@ -41,14 +41,14 @@ PHASES = [
      "artifacts": ["runs/wm_v1/summary.json", "runs/wm_v1/lam20_n256_rs32/seed0/model.pt"]},
     {"n": 5, "title": "Verifier and negative cases", "plain": "One command says VERIFIED or REJECTED; wrong keys, tampered files, unmarked and foreign models are rejected.",
      "artifacts": ["verify/verify_model.py", "mallory/release/signed_manifest.json"]},
-    {"n": 6, "title": "Attack suite", "plain": "43 attacks (noise, pruning, quantization, fine-tuning, permutation, overwrite) and a results table.",
-     "artifacts": ["results/phase6/attack_results.csv", "docs/phase6_results.md"]},
+    {"n": 6, "title": "Attack suite and 6b defences", "plain": "47 attacks (noise, pruning, quantization, fine-tuning, permutation, scaling, overwrite). Phase 6b: the verifier undoes channel permutation and scaling, and reports DAMAGED when an overwrite leaves our code provably present.",
+     "artifacts": ["results/phase6/attack_results.csv", "docs/phase6_results.md", "results/phase6b/attack_results.csv", "results/phase6b/false_accept.csv"]},
     {"n": 7, "title": "Evaluation (started)", "plain": "P7.1: every finished run in one table, plus lambda, ECC, payload and ECC-under-attack plots. More seeds and ablations to come.",
      "artifacts": ["experiments/phase7/collect_runs.py", "results/phase7/wm_runs.csv", "results/phase7/plots/lambda_tradeoff.png"]},
 ]
 
 FUTURE = [
-    {"n": "6b", "title": "Fix the weak spots", "plain": "Permutation defence, attack rs16, stronger fine-tuning."},
+    {"n": "6c", "title": "Remaining weak spots", "plain": "Overwrite still erases the exact payload (now DAMAGED, not removed); attack rs16; stronger fine-tuning; dummy-neuron obfuscation."},
     {"n": "7+", "title": "Rest of Phase 7", "plain": "5 seeds, payload size sweep, ECC on/off, a second model (ResNet-18)."},
     {"n": 8, "title": "Write-up and demo", "plain": "Report, 3-minute live demo, mentor Q and A."},
 ]
@@ -63,6 +63,17 @@ def _p(name, label, type_, default=None, flag=None, help=None, choices=None):
 
 def _model(default, flag="--model", label="Model"):
     return _p("model", label, "model", default, flag)
+
+
+OBFUSCATION_IDS = ["scale_in_carrier_x2", "scale_in_carrier_x10", "scale_in_carrier_x100", "permute_scale_in_x10"]
+
+
+def _obfuscation_attacks(params, root):
+    common = ["--ids"] + OBFUSCATION_IDS + ["--seeds"] + [str(x) for x in params["seeds"]]
+    if params.get("data_root"):
+        common += ["--data-root", params["data_root"]]
+    return [("scaling attacks on signed models", ["-m", "attacks.make_attacked"] + common),
+            ("scaling attacks on unsigned models", ["-m", "attacks.make_attacked", "--source", "baseline"] + common)]
 
 
 def _verify_phase4_models(params, root):
@@ -194,6 +205,22 @@ TASKS = [
     dict(id="p6.summarize", phase=6, title="Build the results tables and plots", cost="seconds", est="10 s", where="local",
          needs=["pandas"], what="Per-attack table, successful removals, false-accept rate, plots. Writes docs/phase6_results.md.",
          argv=["-m", "attacks.summarize"], params=[_p("useful_drop", "Max accuracy drop for a 'useful' model", "float", 0.05, "--useful-drop")]),
+    dict(id="p6.obfuscate", phase=6, title="Phase 6b: scaling attacks", cost="minutes", est="~10 min on CPU", where="local",
+         needs=["torch", "cifar"], what="The scaling half of neural structural obfuscation (x2, x10, x100, and shuffle + x10) on the signed and the unsigned models.",
+         build=_obfuscation_attacks, params=[SEEDS, DATA]),
+    dict(id="p6.evaluate6b", phase=6, title="Phase 6b: verify every attacked model again", cost="minutes", est="~20 min", where="local",
+         needs=["torch", "liboqs", "keys"], what="Reruns the verifier, now with the permutation and scaling defence, on every attacked copy. Writes verify_6b.json next to each and results/phase6b/attack_results.csv; the Phase 6 reports are kept.",
+         argv=["-m", "attacks.evaluate_attacked", "--verify-file", "verify_6b.json", "--csv", "results/phase6b/attack_results.csv"],
+         params=[_p("jobs", "Parallel jobs", "int", 3, "--jobs")]),
+    dict(id="p6.summarize6b", phase=6, title="Phase 6b: results tables and plots", cost="seconds", est="10 s", where="local",
+         needs=["pandas"], what="The Phase 6b table, removals, false-accept rate and plots. Writes docs/phase6b_results.md.",
+         argv=["-m", "attacks.summarize", "--csv", "results/phase6b/attack_results.csv", "--out", "docs/phase6b_results.md",
+               "--plots", "results/phase6b/plots"]),
+    dict(id="p6.false_accept", phase=6, title="Phase 6b: false-accept stress test", cost="minutes", est="~2-5 min", where="local",
+         needs=["torch", "keys"], what="724 models that do NOT carry our code (wrong keys, baselines, Mallory, random networks, each also shuffled and rescaled): none may be VERIFIED or DAMAGED.",
+         argv=["-m", "experiments.phase6b_false_accept"],
+         params=[_p("wrong_keys", "Random keys per signed model", "int", 200, "--wrong-keys"),
+                 _p("random_models", "Random networks", "int", 100, "--random-models")]),
     dict(id="p6.tests", phase=6, title="Phase 6 tests", cost="seconds", est="10 s", where="local", needs=["pytest", "torch"],
          what="Attack code unit tests.", argv=["-m", "pytest", "tests/test_phase6_attacks.py", "tests/test_phase6_logic.py", "-q"]),
     # ---------------- Phase 7
@@ -216,7 +243,8 @@ TASKS = [
          argv=["-m", "pqctl.actions.attack_lab"],
          params=[_model("runs/wm_v1/lam20_n256_rs32/seed0/model.pt"),
                  _p("attack", "Attack", "choice", "noise_all", "--attack", choices=["noise_all", "noise_carrier", "prune_global", "prune_layer",
-                    "quantize", "quantize_pc", "half", "rescale", "permute_out", "permute_in", "permute_all", "finetune", "overwrite"]),
+                    "quantize", "quantize_pc", "half", "rescale", "permute_out", "permute_in", "permute_all", "scale_in", "permute_scale",
+                    "finetune", "overwrite"]),
                  _p("strength", "Strength", "float", 0.1, "--strength"),
                  _p("accuracy", "Also measure accuracy (needs CIFAR-10)", "bool", False, "--accuracy"),
                  _p("data_root", "CIFAR-10 folder", "str", "@cifar", "--data-root")]),
@@ -244,7 +272,10 @@ PIPELINES = [
     {"id": "check-all", "title": "Run every check", "est": "~5 min", "stop_on_fail": False,
      "what": "Re-proves phases 0 to 7 from what is already in the repo: tests, signature, tamper demo, every watermark, negative cases, attack-suite compatibility, results tables and Phase 7 plots. No training; models, keys and the release are never changed (only the results tables and plots are rewritten).",
      "steps": ["p0.mldsa", "tests.all", "p2.verify_release", "p2.tamper", "p3.check", "p3.verify_legacy", "p4.verify_all",
-               "p5.verify", "p5.negative", "p6.compat", "p6.summarize", "p7.collect", "p7.plots"]},
+               "p5.verify", "p5.negative", "p6.compat", "p6.summarize", "p6.false_accept", "p7.collect", "p7.plots"]},
+    {"id": "phase6b", "title": "Phase 6b defences (local)", "est": "~30 min on CPU", "stop_on_fail": True,
+     "what": "The new scaling attacks, the verifier with the permutation and scaling defence on every attacked copy, the Phase 6b tables and the false-accept stress test. Phase 6 reports are kept.",
+     "steps": ["p6.obfuscate", "p6.evaluate6b", "p6.summarize6b", "p6.false_accept"]},
     {"id": "phase6", "title": "Phase 6 attack run (local)", "est": "~2 h on CPU", "stop_on_fail": True,
      "what": "Compatibility check, weight attacks, control group, verification of every attacked model, results. Skips anything already done.",
      "steps": ["p6.compat", "p6.cheap", "p6.control", "p6.evaluate", "p6.summarize"]},

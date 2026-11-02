@@ -183,25 +183,29 @@ def phase4(root):
 
 
 def phase6(root):
+    """The newest attack results: results/phase6b (verifier with the permutation / scaling defence) if it exists,
+    else results/phase6. 'source' says which one."""
     root = Path(root)
-    res = {"summary": [], "totals": None, "plots": []}
-    sp = root / "results/phase6/attack_summary.csv"
+    sub = "phase6b" if (root / "results/phase6b/attack_summary.csv").exists() else "phase6"
+    res = {"summary": [], "totals": None, "plots": [], "source": sub}
+    sp = root / ("results/%s/attack_summary.csv" % sub)
     if sp.exists():
         with open(sp, newline="", encoding="utf-8") as f:
             for r in csv.DictReader(f):
                 res["summary"].append({k: (_f(v) if k not in ("attack_id", "family") else v) for k, v in r.items()})
-    rp = root / "results/phase6/attack_results.csv"
+    rp = root / ("results/%s/attack_results.csv" % sub)
     if rp.exists():
         with open(rp, newline="", encoding="utf-8") as f:
             rows = list(csv.DictReader(f))
         wm = [r for r in rows if r.get("source") == "wm"]
         base = [r for r in rows if r.get("source") == "baseline"]
         res["totals"] = {"wm_runs": len(wm), "wm_verified": sum(r.get("verdict") == "VERIFIED" for r in wm),
-                         "base_runs": len(base), "base_false_accepts": sum(r.get("verdict") == "VERIFIED" for r in base),
+                         "wm_damaged": sum(r.get("verdict") == "DAMAGED" for r in wm),
+                         "base_runs": len(base), "base_false_accepts": sum(r.get("verdict") in ("VERIFIED", "DAMAGED") for r in base),
                          "removed_types": sum(1 for r in res["summary"] if (r.get("removal_success") or 0) > 0)}
-    pd_ = root / "results/phase6/plots"
+    pd_ = root / ("results/%s/plots" % sub)
     if pd_.is_dir():
-        res["plots"] = sorted("results/phase6/plots/" + p.name for p in pd_.glob("*.png"))
+        res["plots"] = sorted("results/%s/plots/" % sub + p.name for p in pd_.glob("*.png"))
     return res
 
 
@@ -238,7 +242,8 @@ def phases(root, history):
                 metric = {"value": "%d configs" % len(p7["configs"]), "label": "%d plots" % len(p7["plots"])}
         elif ph["n"] == 6 and p6["totals"]:
             t = p6["totals"]
-            metric = {"value": "%d/%d" % (t["wm_verified"], t["wm_runs"]), "label": "attacked copies still verified"}
+            metric = {"value": "%d/%d" % (t["wm_verified"] + t.get("wm_damaged", 0), t["wm_runs"]),
+                      "label": "attacked copies still traced (%s)" % p6["source"]}
         out.append({**ph, "state": state, "have": have, "metric": metric, "runs": runs})
     return out
 

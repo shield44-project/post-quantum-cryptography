@@ -179,3 +179,15 @@ def test_attack_lab_strength_limits():
     for attack, s in (("quantize", 1), ("prune_global", 1.0), ("noise_all", -0.1)):
         with pytest.raises(SystemExit):
             check_strength(attack, s)
+
+
+def test_damaged_verdict_is_parsed_and_amber(tmp_path):
+    from pqctl.runner import verdict_tone
+    assert parse_verdict(["EVIDENCE  437 of 512 ...", "DAMAGED"]) == "DAMAGED"
+    assert verdict_tone("DAMAGED", "failed") == "warn" and verdict_tone("1 VERIFIED, 1 DAMAGED", "failed") == "warn"
+    assert verdict_tone("1 VERIFIED, 1 DAMAGED, 1 REJECTED", "failed") == "bad"
+    r = Runner(tmp_path)
+    j = Job("p4.verify_all", "mix", [("a", ["-c", "print('VERIFIED')"]), ("b", ["-c", "print('DAMAGED'); raise SystemExit(2)"])], {},
+            python=sys.executable)
+    r.run(j)
+    assert j.verdict == "1 VERIFIED, 1 DAMAGED" and j.status == "failed"

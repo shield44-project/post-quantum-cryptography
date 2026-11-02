@@ -2,20 +2,24 @@
 
     python -m attacks.summarize --useful-drop 0.05
 
-Key idea: a removal attack only counts as a SUCCESS if the watermark is gone (verdict not VERIFIED) AND the model is
-still useful (accuracy within --useful-drop of the clean model). Destroying the model to kill the mark proves nothing.
+Key idea: a removal attack only counts as a SUCCESS if the watermark is gone AND the model is still useful (accuracy
+within --useful-drop of the clean model). Destroying the model to kill the mark proves nothing.
+"Gone" means REJECTED: a DAMAGED verdict (Phase 6b: the exact payload is lost but the signed codeword is still present
+far beyond chance) still proves where the model came from, so it is not a removal. verified_rate counts exact VERIFIED
+only; detected_rate counts VERIFIED or DAMAGED.
 """
 import argparse
 from pathlib import Path
 
 import pandas as pd
 
-FUNCTION_PRESERVING = ("permute", "rescale")
+FUNCTION_PRESERVING = ("permute", "rescale", "scale_in")
 
 
 def load(csv):
     df = pd.read_csv(csv)
     df["verified"] = (df["verdict"] == "VERIFIED").astype(int)
+    df["detected"] = df["verdict"].isin(["VERIFIED", "DAMAGED"]).astype(int)
     for c in ("flip_rate", "min_margin", "corrected", "erasures"):
         if c in df:
             df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -25,7 +29,7 @@ def load(csv):
 def add_success(df, useful_drop):
     df = df.copy()
     df["useful"] = df["acc_drop"] <= useful_drop
-    df["removal_success"] = ((df["verified"] == 0) & df["useful"]).astype(int)
+    df["removal_success"] = ((df["detected"] == 0) & df["useful"]).astype(int)
     return df
 
 
@@ -34,6 +38,7 @@ def per_attack(df):
     g = df.groupby(["attack_id"], sort=False).agg(
         runs=("verified", "size"),
         verified_rate=("verified", "mean"),
+        detected_rate=("detected", "mean"),
         removal_success=("removal_success", "mean"),
         mean_acc=("attacked_acc", "mean"),
         mean_drop=("acc_drop", "mean"),
@@ -96,18 +101,18 @@ def main():
     wm, base = df[df["source"] == "wm"], df[df["source"] == "baseline"]
     table = per_attack(wm)
     md = ["# Phase 6 results", "",
-          "Models: %d attacked watermarked checkpoints (seeds %s). A removal counts only if the verifier does not say VERIFIED "
+          "Models: %d attacked watermarked checkpoints (seeds %s). A removal counts only if the verifier says REJECTED (not VERIFIED, not DAMAGED) "
           "and test accuracy stays within %.0f points of the clean model." % (len(wm), sorted(wm["seed"].unique().tolist()), 100 * args.useful_drop), "",
           "## Per attack", "", to_md(table), ""]
 
     succ = table[table["removal_success"] > 0]
-    md += ["## Successful removals (watermark gone, model still useful)", ""]
+    md += ["## Successful removals (verdict REJECTED, model still useful)", ""]
     md += [to_md(succ[["attack_id", "family", "runs", "removal_success", "mean_drop", "mean_margin"]])] if len(succ) else ["None. Every attack either left the watermark verified or destroyed the model."]
     md += [""]
 
     broken = table[(table["verified_rate"] < 1.0)]
-    md += ["## Attacks that broke verification in at least one run", ""]
-    md += [to_md(broken[["attack_id", "family", "verified_rate", "mean_drop", "mean_flip", "mean_margin", "mean_corrected"]])] if len(broken) else ["None."]
+    md += ["## Attacks that broke exact verification in at least one run", ""]
+    md += [to_md(broken[["attack_id", "family", "verified_rate", "detected_rate", "mean_drop", "mean_flip", "mean_margin"]])] if len(broken) else ["None."]
     md += [""]
 
     fp = wm[wm["family"].isin(FUNCTION_PRESERVING)]
@@ -119,7 +124,7 @@ def main():
 
     if len(base):
         md += ["## Control: attacks on the UNMARKED baseline models", "",
-               "False-accept rate (verifier says VERIFIED on a model that never had the watermark): **%.3f** over %d checkpoints." % (base["verified"].mean(), len(base)), ""]
+               "False-accept rate (verifier says VERIFIED or DAMAGED on a model that never had the watermark): **%.3f** over %d checkpoints." % (base["detected"].mean(), len(base)), ""]
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Path(args.out).write_text("\n".join(md))

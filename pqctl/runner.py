@@ -21,7 +21,7 @@ ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 VERDICTS = [
     (re.compile(r"COMPAT CHECK:\s*(PASSED|FAILED)"), None),
     (re.compile(r"DONE-WHEN[^\n]*?(PASSED|FAILED|NOT YET)"), None),
-    (re.compile(r"^(VERIFIED|REJECTED)\s*$"), None),
+    (re.compile(r"^(VERIFIED|REJECTED|DAMAGED)\s*$"), None),
     (re.compile(r"=+\s*(.*?\b(?:passed|failed|error)\b.*?)\s+in\s+[\d.]+s"), "pytest"),
     (re.compile(r"^\s*(\d+ passed.*?)\s+in\s+[\d.]+s\s*$"), "pytest"),
     (re.compile(r"^correct message:\s*(True|False)"), "mldsa"),
@@ -77,6 +77,8 @@ def verdict_tone(verdict, status):
     if not verdict:
         return "ok" if status == "passed" else ("bad" if status == "failed" else "muted")
     v = verdict.lower()
+    if v == "damaged" or ("damaged" in v and "rejected" not in v):
+        return "warn"                # the exact payload is lost but the signed code is provably still there
     if "fail" in v or "rejected" in v or "error" in v or "not yet" in v or v.startswith("missing"):
         return "bad"
     return "ok"
@@ -313,8 +315,10 @@ class Runner:
             if len(job.steps) > 1:
                 nv = sum(1 for l in job.lines if l.strip() == "VERIFIED")
                 nr = sum(1 for l in job.lines if l.strip() == "REJECTED")
-                if nv or nr:
-                    job.verdict = "%d VERIFIED, %d REJECTED" % (nv, nr) if nr else "all %d VERIFIED" % nv
+                nd = sum(1 for l in job.lines if l.strip() == "DAMAGED")
+                if nv or nr or nd:
+                    job.verdict = ("all %d VERIFIED" % nv if not (nr or nd) else
+                                   ", ".join("%d %s" % (n, w) for n, w in ((nv, "VERIFIED"), (nd, "DAMAGED"), (nr, "REJECTED")) if n))
             is_lab = bool(T.BY_ID.get(job.task_id, {}).get("lab"))
             if job.status == "passed" and verdict_tone(job.verdict, "passed") == "bad" and not is_lab:
                 job.status = "failed"         # some scripts print FAILED but still exit 0

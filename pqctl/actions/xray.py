@@ -58,11 +58,34 @@ def main():
 
     expected_payload = payload_bits(manifest, n_payload)
     expected_code = code.encode(expected_payload)
-    raw_wrong = [int(a != b) for a, b in zip(raw_bits, expected_code)]
     d = code.decode(logits)
+    undone = None
+    if not (d["ok"] and d["bits"] == expected_payload) and settings["mode"] == "mean":
+        # same Phase 6b defence as the verifier: undo channel permutation / scaling, accept only an exact match
+        from embedding.align import candidate_readouts
+        X = wm.matrix().astype("float64")
+        for label, _, vv in candidate_readouts(X, v, expected_code, weight.shape):
+            if label == "raw":
+                continue
+            z = (X @ vv).tolist()
+            d2 = code.decode(z)
+            if d2["ok"] and d2["bits"] == expected_payload:
+                d, logits, undone = d2, z, label
+                raw_bits = [int(x > 0) for x in z]
+                break
+    raw_wrong = [int(a != b) for a, b in zip(raw_bits, expected_code)]
     decoded = d.get("bits") or []
     match = sum(int(a == b) for a, b in zip(decoded, expected_payload)) if d["ok"] else 0
     verdict = "VERIFIED" if d["ok"] and match == len(expected_payload) else "REJECTED"
+    evidence = None
+    if verdict == "REJECTED" and n_payload == int(manifest["watermark"]["payload_bits"]):
+        from embedding.align import EVIDENCE_LOG2_P, agreement, evidence_threshold, log2_tail
+        raw_logits = wm.extract(model)[1]
+        if log2_tail(code.n_bits, code.n_bits) <= EVIDENCE_LOG2_P:
+            k, need = agreement(raw_logits, expected_code), evidence_threshold(code.n_bits)
+            evidence = {"agree": k, "of": code.n_bits, "need": need, "log2_chance": round(log2_tail(code.n_bits, k), 1)}
+            if k >= need:
+                verdict = "DAMAGED"
 
     print("model     : %s" % args.model)
     print("key       : %s (fingerprint %s)" % (key_label, fp))
@@ -76,6 +99,11 @@ def main():
         print("payload   : %d of %d bits match SHA-256(signed manifest)" % (match, len(expected_payload)))
     else:
         print("repair    : FAILED - too much damage, or no watermark made with this key")
+    if undone:
+        print("undone    : channel %s (function-preserving attack reversed before reading)" % undone)
+    if evidence:
+        print("evidence  : %d of %d code values agree with the signed codeword (need %d; chance 2^%s)"
+              % (evidence["agree"], evidence["of"], evidence["need"], evidence["log2_chance"]))
     print(verdict)
     emit({"model": args.model, "key": key_label, "fingerprint": fp, "settings": settings, "source": source,
           "n_payload": n_payload, "n_code": code.n_bits, "carrier": [r(x, 4) for x in v],
@@ -83,7 +111,7 @@ def main():
           "raw_wrong": sum(raw_wrong), "decoded_ok": bool(d["ok"]), "corrected": d.get("corrected", 0),
           "erasures": d.get("erasures", 0), "decoded": decoded, "expected_payload": expected_payload,
           "payload_match": match, "margin": r(min(abs(z) for z in logits)),
-          "mean_margin": r(sum(abs(z) for z in logits) / len(logits)), "verdict": verdict})
+          "mean_margin": r(sum(abs(z) for z in logits) / len(logits)), "verdict": verdict, "undone": undone, "evidence": evidence})
     return 0                  # REJECTED is a valid answer here, not a failure of the tool
 
 

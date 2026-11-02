@@ -52,6 +52,10 @@ class ProjectionWatermark:
             self._X_dev[key] = self._X_cpu.to(device=like.device, dtype=like.dtype)
         return self._X_dev[key]
 
+    def matrix(self):
+        """The secret +/-1 matrix X (n_bits x dim) as a numpy array."""
+        return self._X_cpu.numpy()
+
     def logits(self, model):
         v = carrier_vector(get_weight(model, self.layer_name), self.mode)
         return self._X(v) @ v
