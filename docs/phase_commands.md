@@ -2857,3 +2857,132 @@ COMPAT CHECK: PASSED, you can run Phase 6
 All checks pass. Files changed on `fix-short-payload` (not committed): `verify/verify_model.py`,
 `experiments/phase5_negative_cases.py`, `tests/test_phase5.py`, `docs/HOW_TO_CHECK.md`,
 `docs/results_log.md`, `docs/phase_commands.md`.
+
+---
+
+## Phase 6b: permutation and scaling defence, DAMAGED verdict (2026-11-03, commit 0d35aa6)
+
+Local, Fedora, CPU only (no GPU). Full record with every file changed: `docs/work_log.md`, part 4.
+
+**Why.** Phase 6 found 4 attack types that removed the watermark while the model stayed useful:
+`permute_in_carrier` and `permute_all` (9/9 removed, 0 accuracy cost) and `overwrite_128bit` / `overwrite_512bit`
+(3.7 / 5.3 points). A fifth free attack was found before any fix was written: scaling the channels that feed the
+carrier (the scaling half of neural structural obfuscation, Yan et al., USENIX Security 2023).
+
+**What changed.** `embedding/align.py` (new): Hungarian re-alignment of the 64 carrier blocks, a linear program for
+per-channel positive scales, Cover's counting bound (`undo_is_safe`), exact binomial tail. `verify/verify_model.py`:
+tries raw, permutation, scaling, permutation + scaling and accepts only an exact 256-bit match; the search only runs
+for the full payload and when the bound is below 2^-64 (2^-239.7 for rs32; refused for legacy 32-bit codes). New
+verdict DAMAGED (exit 2) when at least 358 of 512 code values agree with the signed codeword in the model's own
+order (chance below 2^-64). New attacks: `scale_in_carrier_x2/x10/x100`, `permute_scale_in_x10` (47 attacks).
+
+### 6b.1 Measure the broken-through runs (local)
+
+```bash
+python - <<'PY'
+from scipy.stats import binom
+print(next(k for k in range(256, 513) if binom.sf(k - 1, 512, 0.5) <= 2.0**-64))
+PY
+```
+
+**Output**
+
+```
+358                                   (DAMAGED threshold: 69.9% of 512)
+overwrite_128bit    agreement [0.854, 0.91, 0.861]    acc drop [0.038, 0.039, 0.034]
+overwrite_512bit    agreement [0.764, 0.797, 0.75]    acc drop [0.053, 0.063, 0.043]
+permute_in_carrier  agreement 0.457 - 0.537 (9 runs)  acc drop 0.0
+```
+
+### 6b.2 The scaling attack, before the defence (local)
+
+```
+max |output change| x2:  1.4e-06  -> VERIFIED
+max |output change| x10: 2.9e-06  -> FAIL watermark read; EVIDENCE 390/512 -> DAMAGED
+```
+
+### 6b.3 The defence on the broken-through models (local)
+
+```bash
+python -m verify.verify_model --model runs/attacks/wm/seed0/permute_in_carrier/rep0/model.pt
+python -m verify.verify_model --no-align --model runs/attacks/wm/seed0/permute_in_carrier/rep0/model.pt
+python -m verify.verify_model --model runs/attacks/wm/seed0/overwrite_128bit/rep0/model.pt
+python -m verify.verify_model --ecc rs32 --model runs/baseline/seed0/model.pt
+```
+
+**Output**
+
+```
+permute_in_carrier     PASS watermark read (... after undoing channel permutation (62 of 64 channels moved))  VERIFIED   exit 0
+  with --no-align      FAIL watermark read (decoder failed)                                                   REJECTED   exit 1
+overwrite_128bit       EVIDENCE 437 of 512 code values agree (need 358; chance 2^-208.4)                      DAMAGED    exit 2
+baseline (rs32 forced) FAIL watermark read (decoder failed; min margin 0.00)                                  REJECTED   exit 1
+scale x10              VERIFIED after undoing channel scaling (margin 1.33)
+permute + scale x10    VERIFIED after undoing channel permutation + scaling (62 of 64 channels moved)
+```
+
+**A bug found on the way.** The first version (without `undo_is_safe`) made 3 Phase 5 tests pass a wrong key, an
+unmarked model and someone else's model: their tiny test models have 32 code values over 16 channels, and 16 free
+factors fit 32 signs. Bound for that case: 2^-1.0. With the guard all Phase 5 tests pass again.
+
+### 6b.4 New attacks, re-verify everything, tables (local, ~45 min)
+
+```bash
+IDS="scale_in_carrier_x2 scale_in_carrier_x10 scale_in_carrier_x100 permute_scale_in_x10"
+python -m attacks.make_attacked --ids $IDS
+python -m attacks.make_attacked --source baseline --ids $IDS
+python -m attacks.evaluate_attacked --jobs 4 --verify-file verify_6b.json --csv results/phase6b/attack_results.csv
+python -m attacks.summarize --csv results/phase6b/attack_results.csv --out docs/phase6b_results.md --plots results/phase6b/plots
+# all of it in one go:   python -m pqctl pipeline phase6b
+```
+
+**Output**
+
+```
+every new attacked copy: acc drop +0.0000 (function-preserving), ~21 s each
+wrote results/phase6b/attack_results.csv (306 rows)
+Successful removals (verdict REJECTED, model still useful): None.
+False-accept rate (VERIFIED or DAMAGED on a model that never had the watermark): 0.000 over 54 checkpoints.
+
+Phase 6  wm 216: VERIFIED 177, DAMAGED  0, REJECTED 39 | baseline 18: false accepts 0 | 43 attacks
+Phase 6b wm 252: VERIFIED 231, DAMAGED 20, REJECTED  1 | baseline 54: false accepts 0 | 47 attacks
+(the 1 REJECTED: quant_pt_2, accuracy 9.5%, useless model)
+```
+
+### 6b.5 False-accept stress test (local, ~2.5 min)
+
+```bash
+python -m experiments.phase6b_false_accept
+```
+
+**Output** (first run, random wrong keys; since 2026-11-04 the keys come from `--seed 0`, see Phase 7 P7.2)
+
+```
+             group  cases  exact_accepts  damaged_verdicts  max_raw_agree  mean_raw_agree
+         wrong key    600              0                 0            284           255.8
+          baseline      3              0                 0            256           253.3
+baseline scrambled     15              0                 0            278           258.5
+           mallory      1              0                 0            264           264.0
+ mallory scrambled      5              0                 0            265           259.2
+       random init    100              0                 0            289           256.1
+DONE-WHEN (0 false VERIFIED, 0 false DAMAGED over 724 null cases): PASSED
+```
+
+### 6b.6 Final check (local)
+
+```bash
+python -m pytest -q
+python -m pqctl pipeline check-all
+```
+
+**Output**
+
+```
+76 passed in 20.96s
+check-all: 14 steps, all passed (235 s), incl. p6.false_accept PASSED
+```
+
+**Ideas for improving**
+- A rigorous bound for the combined permutation + scaling search (a union bound over 64! orders is too loose).
+- Overwrite still erases the exact payload: marks on several (or secret) layers would need retraining.
+- Not tested yet: dummy-neuron obfuscation, overwriting another layer, longer fine-tuning, the rs16 models.

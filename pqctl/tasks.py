@@ -43,13 +43,13 @@ PHASES = [
      "artifacts": ["verify/verify_model.py", "mallory/release/signed_manifest.json"]},
     {"n": 6, "title": "Attack suite and 6b defences", "plain": "47 attacks (noise, pruning, quantization, fine-tuning, permutation, scaling, overwrite). Phase 6b: the verifier undoes channel permutation and scaling, and reports DAMAGED when an overwrite leaves our code provably present.",
      "artifacts": ["results/phase6/attack_results.csv", "docs/phase6_results.md", "results/phase6b/attack_results.csv", "results/phase6b/false_accept.csv"]},
-    {"n": 7, "title": "Evaluation (started)", "plain": "P7.1: every finished run in one table, plus lambda, ECC, payload and ECC-under-attack plots. More seeds and ablations to come.",
+    {"n": 7, "title": "Evaluation (P7.1-P7.4 done)", "plain": "Every run in one table (P7.1), false-positive study (P7.2), robustness curves (P7.3) and a comparison with the naive sign-based scheme (P7.4). Training sweeps (P7.5) run on Colab.",
      "artifacts": ["experiments/phase7/collect_runs.py", "results/phase7/wm_runs.csv", "results/phase7/plots/lambda_tradeoff.png"]},
 ]
 
 FUTURE = [
     {"n": "6c", "title": "Remaining weak spots", "plain": "Overwrite still erases the exact payload (now DAMAGED, not removed); attack rs16; stronger fine-tuning; dummy-neuron obfuscation."},
-    {"n": "7+", "title": "Rest of Phase 7", "plain": "5 seeds, payload size sweep, ECC on/off, a second model (ResNet-18)."},
+    {"n": "7+", "title": "Rest of Phase 7", "plain": "P7.5 sweeps on Colab (5 seeds, lambda, payload size, ECC off); P7.6 a second model (ResNet-18) with its own signed release."},
     {"n": 8, "title": "Write-up and demo", "plain": "Report, 3-minute live demo, mentor Q and A."},
 ]
 
@@ -231,6 +231,19 @@ TASKS = [
          what="Lambda trade-off, ECC comparison, payload vs accuracy and ECC under attack. Run 'Collect' first.",
          argv=["-m", "experiments.phase7.make_plots"],
          params=[_p("lam", "Lambda for the ECC and payload plots", "float", 20.0, "--lam")]),
+    dict(id="p7.naive", phase=7, title="P7.4: naive sign-based scheme under the same attacks", cost="minutes", est="~40 min on CPU",
+         where="local", needs=["torch", "cifar", "keys"],
+         what="The project's first design (bit = sign of a key-chosen weight), same payload, ECC and decision rule, attacked with every cheap Phase 6 attack. Writes results/phase7/naive_vs_projection.csv.",
+         argv=["-m", "experiments.phase7.naive_baseline"], params=[SEEDS, DATA]),
+    dict(id="p7.report", phase=7, title="P7.2-P7.4: false-positive study, robustness curves, comparison", cost="seconds", est="10 s",
+         where="local", needs=["pandas"],
+         what="Builds docs/phase7_results.md and three plots from results already in the repo. Missing inputs skip their section.",
+         argv=["-m", "experiments.phase7.robustness_report"]),
+    dict(id="p7.sweeps", phase=7, title="P7.5: lambda, payload, ECC-off and seed sweeps", cost="hours", est="~3.3 h on a T4 (23 runs)",
+         where="colab", needs=["torch", "cifar", "keys"],
+         what="Trains every run Phase 7 still needs, most important first, skipping finished ones. Checks the watermark key fingerprint first. Then run Collect and Plots.",
+         argv=["-m", "experiments.phase7.run_sweeps"],
+         params=[_p("only", "Only these groups (blank = all)", "choices", [], "--only", choices=["seeds", "ecc_off", "lambda", "payload"])]),
 
     # ---------------- interactive lab tools (used by the dashboard's GUI pages; also runnable from the CLI)
     dict(id="lab.xray", phase="lab", title="Watermark X-ray", cost="seconds", est="5 s", where="local", needs=["torch"], lab=True,
@@ -272,7 +285,7 @@ PIPELINES = [
     {"id": "check-all", "title": "Run every check", "est": "~5 min", "stop_on_fail": False,
      "what": "Re-proves phases 0 to 7 from what is already in the repo: tests, signature, tamper demo, every watermark, negative cases, attack-suite compatibility, results tables and Phase 7 plots. No training; models, keys and the release are never changed (only the results tables and plots are rewritten).",
      "steps": ["p0.mldsa", "tests.all", "p2.verify_release", "p2.tamper", "p3.check", "p3.verify_legacy", "p4.verify_all",
-               "p5.verify", "p5.negative", "p6.compat", "p6.summarize", "p6.false_accept", "p7.collect", "p7.plots"]},
+               "p5.verify", "p5.negative", "p6.compat", "p6.summarize", "p6.false_accept", "p7.collect", "p7.plots", "p7.report"]},
     {"id": "phase6b", "title": "Phase 6b defences (local)", "est": "~30 min on CPU", "stop_on_fail": True,
      "what": "The new scaling attacks, the verifier with the permutation and scaling defence on every attacked copy, the Phase 6b tables and the false-accept stress test. Phase 6 reports are kept.",
      "steps": ["p6.obfuscate", "p6.evaluate6b", "p6.summarize6b", "p6.false_accept"]},

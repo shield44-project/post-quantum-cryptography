@@ -16,7 +16,7 @@ For each case: does any candidate reading decode exactly (must be 0), and the ra
 import argparse
 import json
 import math
-import secrets
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +32,11 @@ from embedding.projection import ProjectionWatermark, carrier_vector, get_weight
 from training.model import SmallCNN
 
 LAYER = "features.6.0.weight"
+
+
+def null_key(seed, model_seed, i):
+    """A 32-byte wrong watermark key, reproducible from (seed, model, index) and unrelated to the real key."""
+    return hashlib.sha256(b"phase6b-null-key|%d|%d|%d" % (seed, model_seed, i)).digest()
 
 
 def scramble(model, seed):
@@ -70,6 +75,7 @@ def main():
     ap.add_argument("--key", default="keys/watermark_key.bin")
     ap.add_argument("--release-dir", default="release")
     ap.add_argument("--out", default="results/phase6b/false_accept.csv")
+    ap.add_argument("--seed", type=int, default=0, help="the wrong keys are derived from it, so a rerun gives the same table")
     args = ap.parse_args()
 
     manifest = json.loads((Path(args.release_dir) / "signed_manifest.json").read_text())["manifest"]
@@ -82,7 +88,7 @@ def main():
     cases = []        # (group, name, model, key)
     for s in (0, 1, 2):
         m = load_smallcnn("runs/wm_v1/lam20_n256_rs32/seed%d/model.pt" % s)
-        cases += [("wrong key", "wm seed%d key%d" % (s, i), m, secrets.token_bytes(32)) for i in range(args.wrong_keys)]
+        cases += [("wrong key", "wm seed%d key%d" % (s, i), m, null_key(args.seed, s, i)) for i in range(args.wrong_keys)]
     for s in (0, 1, 2):
         b = load_smallcnn("runs/baseline/seed%d/model.pt" % s)
         cases += [("baseline", "seed%d" % s, b, ours)] + [("baseline scrambled", "seed%d r%d" % (s, r), scramble(b, 100 + r), ours)
