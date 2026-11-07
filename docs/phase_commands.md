@@ -3109,7 +3109,7 @@ smoke run (1 epoch, CPU, 83 s):
 verify_model on the smoke model: all checks PASS, VERIFIED (256 bits match)
 ```
 
-### A1.3: next, Colab (T4, about 8.5 min per run) — NOT RUN YET
+### A1.3: Colab (T4, about 8.5 min per run), run 2026-11-07
 
 Same recipe as the chosen Phase 4 model (features.6.0, rs32, lam 20, 30 epochs), only the loss changes.
 Start with seed 0 at m = 2.5, then the sweep if it looks good:
@@ -3124,3 +3124,111 @@ python -m experiments.phase7.collect_runs            # compare against lam20_n25
 Done-when: paired cost within 1 to 2 points (mean of 3 seeds), 0 decoded errors, min margin about the BCE
 model's 2.24. Then rerun the Phase 6 fine-tune and prune+fine-tune attacks on the hinge models: with hinge,
 every bit sits near m (BCE leaves most bits far above the minimum), so robustness has to be measured again.
+
+**What was actually run on Colab (2026-11-07, T4).** Fresh clone of branch `fix` into `/content/pq` (not the
+old Drive folder), watermark key uploaded with `files.upload()` and its fingerprint asserted, CIFAR copied
+from `My Drive/pq-watermark/cifar_cache/`:
+
+```python
+!git clone --depth 1 --branch fix https://github.com/shield44-project/post-quantum-cryptography.git /content/pq
+%cd /content/pq
+!pip install -q "reedsolo>=1.7"
+!python -m pytest tests/test_hinge_loss.py tests/test_phase4.py -q
+# key: files.upload() -> keys/watermark_key.bin, assert key_fingerprint == "81b57c4b28884f01"
+!mkdir -p /content/data && cp -r /content/drive/MyDrive/pq-watermark/cifar_cache/* /content/data/
+!CIFAR_ROOT=/content/data PYTHONUNBUFFERED=1 python -m training.train_watermarked --seed 0 --epochs 30 --lam 20 --n-bits 256 --ecc rs32 --wm-loss hinge --hinge-margin 2.5 --out-root runs/wm_v1
+!CIFAR_ROOT=/content/data PYTHONUNBUFFERED=1 python -m training.train_watermarked --seed 0 --epochs 30 --lam 20 --n-bits 256 --ecc rs32 --wm-loss hinge --hinge-margin 1.5 --out-root runs/wm_v1
+for s in [1, 2]:
+    !CIFAR_ROOT=/content/data PYTHONUNBUFFERED=1 python -m training.train_watermarked --seed {s} --epochs 30 --lam 20 --n-bits 256 --ecc rs32 --wm-loss hinge --hinge-margin 1.5 --out-root runs/wm_v1
+!mkdir -p /content/drive/MyDrive/pq-watermark/hinge_runs
+!cp -r runs/wm_v1/*hinge* /content/drive/MyDrive/pq-watermark/hinge_runs/
+!zip -qr /content/hinge_runs.zip runs/wm_v1/*hinge*
+from google.colab import files; files.download('/content/hinge_runs.zip')
+```
+
+Lesson: the first copy-to-Drive inside the seed loop failed (`cp: target ... No such file or directory`)
+because the `mkdir -p` had not been run; always create the Drive folder before the loop.
+
+**Output (last epoch of each run)**
+
+```
+hinge m 2.5 seed 0: ep 30  cls 0.498  wm 0.0000  acc 0.8347  bit_errors 0/512  decoded 0/256  min|logit| 2.50
+hinge m 1.5 seed 0: ep 30  cls 0.449  wm 0.0000  acc 0.8479  bit_errors 0/512  decoded 0/256  min|logit| 1.50
+hinge m 1.5 seed 1: ep 30  cls 0.507  wm 0.0000  acc 0.8273  bit_errors 0/512  decoded 0/256  min|logit| 1.50
+hinge m 1.5 seed 2: ep 30  cls 0.431  wm 0.0000  acc 0.8469  bit_errors 0/512  decoded 0/256  min|logit| 1.50
+(BCE lam 20 seed 0 for comparison: cls 0.517  acc 0.8308  min|logit| 2.25; baseline seed 0 train loss 0.373)
+```
+
+The watermark loss is 0.0000 from epoch 2 on in every run: once all bits are past m the hinge gives no
+gradient, and min|logit| stays at exactly m (weight decay pulls it below, the hinge pushes it back).
+
+### A1.4: import and checks of the Colab results (local, Windows CPU, 2026-11-07)
+
+**Commands**
+
+```bash
+# 1. look inside the zip before extracting (only runs/wm_v1/*hinge*/seed*/{final.json,metrics.csv,model.pt}, no keys)
+unzip -l ~/Downloads/hinge_runs.zip
+# 2. extract into an EMPTY scratch folder, check each final.json against the BCE run
+#    (same n_bits, ecc, codeword_bits, layer, mode, width, num_params, lam, epochs, payload_bits, key_fingerprint)
+unzip -q ~/Downloads/hinge_runs.zip -d <scratch>
+# 3. copy into the repo
+cp -r <scratch>/runs/wm_v1/lam20_n256_rs32_hinge1.5 <scratch>/runs/wm_v1/lam20_n256_rs32_hinge2.5 runs/wm_v1/
+# 4. verifier on every new model
+python -m verify.verify_model --model runs/wm_v1/lam20_n256_rs32_hinge1.5/seed0/model.pt     # also seed1, seed2, hinge2.5/seed0
+# 5. re-measure test accuracy, logit spread and the carrier layer split (inline script, see below)
+# 6. Phase 7 tables now include the hinge rows
+python -m experiments.phase7.collect_runs
+```
+
+Script for step 5 (accuracy + logits; the weight split is the second loop):
+
+```python
+import json, torch, numpy as np, torchvision, torchvision.transforms as T
+from torch.utils.data import DataLoader
+from training.model import SmallCNN
+from training.train_watermarked import evaluate, MEAN, STD
+from embedding.keys import load_key
+from embedding.projection import ProjectionWatermark, get_weight
+test = torchvision.datasets.CIFAR10("data", train=False, download=False, transform=T.Compose([T.ToTensor(), T.Normalize(MEAN, STD)]))
+loader = DataLoader(test, batch_size=500, shuffle=False, num_workers=0)
+key = load_key("keys/watermark_key.bin")
+runs = ["lam20_n256_rs32/seed%d" % s for s in range(3)] + ["lam20_n256_rs32_hinge1.5/seed%d" % s for s in range(3)] + ["lam20_n256_rs32_hinge2.5/seed0"]
+for r in runs:
+    d = json.load(open("runs/wm_v1/%s/final.json" % r))
+    m = SmallCNN(width=32); m.load_state_dict(torch.load("runs/wm_v1/%s/model.pt" % r, map_location="cpu")); m.eval()
+    acc = evaluate(m, loader, "cpu")
+    wm = ProjectionWatermark(key, d["layer"], d["codeword_bits"], d["mode"], get_weight(m, d["layer"]).shape)
+    z = np.abs(np.array(wm.extract(m)[1]))
+    print(r, "acc %.4f colab %.4f | |logit| min %.2f median %.2f mean %.2f max %.2f" % (acc, d["final_test_acc"], z.min(), np.median(z), z.mean(), z.max()))
+
+# weight split of features.6.0 (128 filters x 576): shared part = mean filter, own part = filter - mean
+for pat in ["runs/baseline/seed%d/model.pt", "runs/wm_v1/lam20_n256_rs32/seed%d/model.pt", "runs/wm_v1/lam20_n256_rs32_hinge1.5/seed%d/model.pt"]:
+    for s in range(3):
+        w = torch.load(pat % s, map_location="cpu")["features.6.0.weight"].flatten(1)
+        c = w.mean(0); own = (w - c).norm(dim=1).mean()
+        print(pat % s, "shared %.2f own %.3f ratio %.1f energy-in-shared %.0f%%" % (c.norm(), own, c.norm() / own, 100 * (c.norm()**2 * 128 / w.norm()**2).item()))
+```
+
+**Output**
+
+```
+key fingerprint 81b57c4b28884f01 and payload/settings identical to the BCE run: all 4 runs
+verify_model: hinge1.5 seed0/1/2 and hinge2.5 seed0 -> VERIFIED, 256 bits match, corrected 0, erasures 0
+
+lam20_n256_rs32/seed0            acc 0.8308 | |logit| min 2.25 median 3.74 mean 4.52 max 17.95
+lam20_n256_rs32_hinge1.5/seed0   acc 0.8479 | |logit| min 1.50 median 1.50 mean 2.02 max 8.07
+lam20_n256_rs32_hinge2.5/seed0   acc 0.8347 | |logit| min 2.50 median 2.50 mean 3.35 max 13.33
+(every accuracy equals the Colab value to 4 decimals; seeds 1, 2 alike)
+
+baseline         shared 0.11-0.13  own 0.47-0.60  ratio 0.2       energy-in-shared 2-3%
+hinge m 1.5      shared 2.39       own 0.57-0.67  ratio 3.6-4.2   energy-in-shared 88-89%
+hinge m 2.5      shared 3.98       own 0.56       ratio 7.1       energy-in-shared 96%
+BCE lam 20       shared 5.05       own 0.51-0.62  ratio 8.2-10.0  energy-in-shared 97%
+
+collect_runs: rs32 features.6.0 lam 20 hinge1.5, seeds 0,1,2: mean acc 0.8407, mean diff -0.0100 (std 0.0177),
+0 raw / 0 decoded errors, min margin 1.50  (17 runs, 10 configs)
+```
+
+Results and interpretation: `docs/results_log.md`, "Fix A1". Next: robustness of the hinge m 1.5 models
+(noise test + Phase 6 suite) before adopting m 1.5.

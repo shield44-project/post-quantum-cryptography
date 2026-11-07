@@ -138,3 +138,51 @@ Accuracy cost of watermark
 
 - tests: `test_phase5.py` 11 passed (3 new: short payload, forger with 1/8/32 bits, default n_bits from
   manifest); phases 2-5, 29 passed (Windows, liboqs 0.16.0).
+
+## Fix A1: margin-capped (hinge) watermark loss for the accuracy cost (recorded 2026-11-07)
+- Setup: same recipe as the chosen Phase 4 model (features.6.0, mean mode, rs32 = 512 embedded bits,
+  lam 20, 30 epochs, Colab T4), only the watermark loss changes: `--wm-loss hinge --hinge-margin m`.
+  Code, commands and Colab steps: `docs/phase_commands.md`, "Phase 4 fix ... (A1)". Branch `fix`.
+- Paired by seed (points; "vs BCE" = hinge minus the BCE lam 20 model of the same seed):
+
+| seed | baseline | BCE lam 20 | hinge m 1.5 | hinge m 1.5 vs baseline | hinge m 1.5 vs BCE |
+|---|---|---|---|---|---|
+| 0 | 0.8612 | 0.8308 | 0.8479 | −1.33 | +1.71 |
+| 1 | 0.8532 | 0.8033 | 0.8273 | −2.59 | +2.40 |
+| 2 | 0.8378 | 0.8252 | 0.8469 | +0.91 | +2.17 |
+| mean | 0.8507 | 0.8198 | **0.8407** | **−1.00 ± 1.77** | **+2.09 ± 0.35** |
+
+- hinge m 2.5, seed 0 only: 0.8347 (−2.65 vs baseline, +0.39 vs BCE), margin 2.50.
+- All 4 hinge models: 0 raw / 0 decoded errors on every epoch, min margin exactly m, key fingerprint
+  81b57c4b28884f01, payload and settings identical to the BCE run; `verify_model` VERIFIED (256 bits);
+  test accuracy re-measured locally (Windows CPU) matches Colab to 4 decimals.
+- Done-when (mean paired cost within 1 to 2 points, 0 decoded errors): **MET** at m 1.5. Caveat: baseline
+  seed 2 looks weak (see Phase 4), so seed 2's +0.91 flatters the mean; without it the cost is −1.96. The
+  seed-by-seed gain over BCE (+1.7 to +2.4 on every seed) is the reliable number.
+- Seed-0 cost vs margin: BCE lam 5 (margin 1.21) −2.93; hinge 1.5 (1.50) −1.33; hinge 2.5 (2.50) −2.65;
+  BCE lam 20 (2.25) −3.04. At the same margin hinge is clearly cheaper; the margin itself is the main cost.
+- Why (weight analysis of features.6.0, 128 filters × 576): the watermark constrains the MEAN filter, so
+  training builds a large component shared by all 128 filters. Each filter's own part stays baseline-sized.
+
+| model | shared part (norm of mean filter) | own part per filter | shared / own | layer energy in shared part | layer norm |
+|---|---|---|---|---|---|
+| baseline (3 seeds) | 0.11-0.13 | 0.47-0.60 | 0.2 | 2-3% | 8.2-8.9 |
+| hinge m 1.5 (3 seeds) | 2.39 | 0.57-0.67 | 3.6-4.2 | 88-89% | 28.7 |
+| hinge m 2.5 (seed 0) | 3.98 | 0.56 | 7.1 | 96% | 46.1 |
+| BCE lam 20 (3 seeds) | 5.05 | 0.51-0.62 | 8.2-10.0 | 97% | 57.9 |
+
+  The cost follows the shared/own ratio (0.2 → 0, 4 → −1.0, 7 → −2.65, 9 → −3.1): every channel of the layer
+  carries the same large response and the filters' own features are drowned out. BCE inflates the shared
+  part far past what the margin needs (|logit| median 3.74, mean 4.52, max 18); hinge stops at m (median
+  1.50, mean 2.02, max 8.0).
+- Correction to the Phase 4 note above: carrier capacity was NOT ruled out. rs16 (384 bits) and rs32 (512)
+  both use most of the 576 numbers; Phase 3 (32 bits on the same carrier) cost about 0. Holding 512
+  sign conditions with margin m on 576 numbers needs a large mean filter, which is the shared part above.
+- Literature check: Uchida et al. 2017 used the same carrier (M = 576, filter mean, BCE) with 256 bits and
+  lam 0.01 and saw no cost (test error 8.04 → 7.97 %), but enforced no margin. On a small CIFAR-10 CNN,
+  256-bit schemes cost 1.5-2.2 points (DICTION paper, Table 3: DeepSigns, DICTION, ResEncrypt).
+- OPEN (blocks adopting m 1.5): robustness. All hinge bits sit near m (BCE: most bits far above its
+  minimum), so rerun the noise test and the Phase 6 suite (fine-tune, prune+fine-tune, quantization,
+  overwrite) on the 3 hinge m 1.5 models and compare with the BCE model's 177/216 VERIFIED.
+- Ideas suggested by the weight analysis: `--mode full` (no shared filter is forced), fewer embedded bits
+  (rs16 or a lighter code), or a bigger model (ResNet-18, Phase 7).
