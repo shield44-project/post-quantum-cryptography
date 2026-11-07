@@ -2857,3 +2857,270 @@ COMPAT CHECK: PASSED, you can run Phase 6
 All checks pass. Files changed on `fix-short-payload` (not committed): `verify/verify_model.py`,
 `experiments/phase5_negative_cases.py`, `tests/test_phase5.py`, `docs/HOW_TO_CHECK.md`,
 `docs/results_log.md`, `docs/phase_commands.md`.
+
+## Phase 4 fix: margin-capped (hinge) watermark loss for the accuracy cost (A1)
+
+**Why.** Phase 4 costs about −3 accuracy points (rs32 −3.10 ± 1.87, target 1 to 2). The training log of
+`runs/wm_v1/lam20_n256_rs32/seed0/metrics.csv` shows the cause: all 512 bits are correct after epoch 1, but
+BCE never reaches 0 (it flattens at 0.026), so `lam * BCE = 20 * 0.026 = 0.52` keeps pulling on the carrier
+until weight decay balances it. In the last epoch that term is as large as the classification loss (0.52).
+The watermarked models end with train CE 0.49-0.60 against 0.37 for the baseline: they under-fit.
+
+**Fix.** Optional loss `--wm-loss hinge --hinge-margin m`: `mean(relu(m - s * z))` with `s = +1` for bit 1 and
+`-1` for bit 0. A bit whose signed logit is already `>= m` gives 0 loss and 0 gradient, so the watermark stops
+competing with classification once the margin is reached. BCE stays the default, so every existing run, the
+attacks (`attacks/train_attacks.py`) and Mallory's stand-in are unchanged. The verifier is not touched
+(extraction is the same sign test). Branch: `fix` (from `phase7`, 2026-11-07).
+
+**Files.**
+- `embedding/projection.py`: `WM_LOSSES`, `wm_loss_from_logits()`, `ProjectionWatermark(loss_kind=, margin=)`.
+- `training/train_watermarked.py`: `--wm-loss`, `--hinge-margin`; hinge runs go to `..._hinge<m>/seed<N>` so
+  they never overwrite a BCE run; `final.json` records `wm_loss` and `hinge_margin`.
+- `experiments/phase7/collect_runs.py`: new `wm_loss` column (`bce` or `hinge<m>`) and group key, so hinge and
+  BCE runs with the same lambda are not averaged together. Old `final.json` files count as `bce`.
+- `tests/test_hinge_loss.py`: 7 new tests (see the file).
+
+### A1.1: code (local)
+
+```diff
+diff --git a/embedding/projection.py b/embedding/projection.py
+index e7bc41a..f358c4a 100644
+--- a/embedding/projection.py
++++ b/embedding/projection.py
+@@ -4,7 +4,10 @@ carrier vector v  : the chosen conv layer's weights, either
+                     "mean" -> average over output channels, flattened (dim = in*k*k)
+                     "full" -> the whole weight tensor flattened   (dim = out*in*k*k)
+ logits            : X @ v            (X = secret +/-1 matrix, shape n_bits x dim)
+-watermark loss    : BCE-with-logits(logits, payload bits)
++watermark loss    : "bce"   -> BCE-with-logits(logits, payload bits)           (Phases 3-6, the default)
++                    "hinge" -> mean(relu(m - s * logits)), s = +1 for bit 1, -1 for bit 0
++                               (margin-capped: a bit whose logit is already past m adds no loss and
++                               no gradient, so the watermark stops competing with classification)
+ extraction        : bit = 1 if logit > 0 else 0
+ """
+ import torch
+@@ -12,6 +15,20 @@ import torch.nn.functional as F
+ 
+ from embedding.keys import projection_matrix_np
+ 
++WM_LOSSES = ("bce", "hinge")
++
++
++def wm_loss_from_logits(z, bits, kind="bce", margin=2.5):
++    """Watermark loss for logits z and target bits (0./1., same shape as z)."""
++    if kind == "bce":
++        return F.binary_cross_entropy_with_logits(z, bits)
++    if kind == "hinge":
++        if margin <= 0:
++            raise ValueError("hinge margin must be > 0, got %r" % margin)
++        signs = 2.0 * bits - 1.0                    # bit 1 -> +1, bit 0 -> -1
++        return F.relu(margin - signs * z).mean()    # 0 once every signed logit is >= margin
++    raise ValueError("wm loss must be one of %s, got %r" % (WM_LOSSES, kind))
++
+ 
+ def get_weight(model, layer_name):
+     params = dict(model.named_parameters())
+@@ -38,8 +55,11 @@ def carrier_dim(weight_shape, mode):
+ 
+ 
+ class ProjectionWatermark:
+-    def __init__(self, key: bytes, layer_name: str, n_bits: int, mode: str, weight_shape):
++    def __init__(self, key: bytes, layer_name: str, n_bits: int, mode: str, weight_shape,
++                 loss_kind: str = "bce", margin: float = 2.5):
+         self.layer_name, self.n_bits, self.mode = layer_name, n_bits, mode
++        wm_loss_from_logits(torch.zeros(1), torch.ones(1), loss_kind, margin)    # fail fast on a bad kind/margin
++        self.loss_kind, self.margin = loss_kind, margin
+         self.dim = carrier_dim(tuple(weight_shape), mode)
+         if mode == "mean" and n_bits > self.dim:
+             raise ValueError("n_bits (%d) exceeds carrier dimension (%d). Use --mode full, a wider model, or fewer bits." % (n_bits, self.dim))
+@@ -59,7 +79,7 @@ class ProjectionWatermark:
+     def loss(self, model, bits):
+         """bits: tensor of 0./1. with shape (n_bits,)"""
+         z = self.logits(model)
+-        return F.binary_cross_entropy_with_logits(z, bits.to(device=z.device, dtype=z.dtype))
++        return wm_loss_from_logits(z, bits.to(device=z.device, dtype=z.dtype), self.loss_kind, self.margin)
+ 
+     @torch.no_grad()
+     def extract(self, model):
+diff --git a/experiments/phase7/collect_runs.py b/experiments/phase7/collect_runs.py
+index f5d2a10..8bb096a 100644
+--- a/experiments/phase7/collect_runs.py
++++ b/experiments/phase7/collect_runs.py
+@@ -6,7 +6,7 @@
+ Reads   runs/<root>/<run name>/seed<N>/final.json   (written by training/train_watermarked.py)
+         runs/baseline/seed<N>/final.json            (written by training/train_baseline.py)
+ Writes  results/phase7/wm_runs.csv        one row per trained model
+-        results/phase7/wm_config_summary.csv   one row per (ecc, n_bits, layer, lam), mean +- std over seeds
++        results/phase7/wm_config_summary.csv   one row per (ecc, n_bits, layer, lam, wm_loss), mean +- std over seeds
+ Accuracy differences are PAIRED: watermarked seed N minus baseline seed N (same as experiments/run_phase4.py).
+ """
+ import argparse
+@@ -26,6 +26,12 @@ def load_baselines(baseline_dir):
+     return out
+ 
+ 
++def wm_loss_label(d):
++    """'bce' for runs before the hinge option existed (no wm_loss key), else 'bce' or 'hinge<m>'."""
++    kind = d.get("wm_loss", "bce")
++    return kind if kind == "bce" else "%s%g" % (kind, d["hinge_margin"])
++
++
+ def load_runs(roots, baselines):
+     rows = []
+     for root in roots:
+@@ -37,7 +43,7 @@ def load_runs(roots, baselines):
+             base = baselines.get(seed)
+             rows.append({
+                 "root": str(root), "run": f.parent.parent.name, "seed": seed,
+-                "lam": d["lam"], "n_bits": d["n_bits"], "ecc": d["ecc"],
++                "lam": d["lam"], "wm_loss": wm_loss_label(d), "n_bits": d["n_bits"], "ecc": d["ecc"],
+                 "codeword_bits": d["codeword_bits"], "layer": d["layer"], "mode": d.get("mode", "mean"),
+                 "epochs": d.get("epochs"), "acc": d["final_test_acc"], "base_acc": base,
+                 "acc_diff": None if base is None else d["final_test_acc"] - base,
+@@ -49,7 +55,7 @@ def load_runs(roots, baselines):
+ 
+ 
+ def summarize(df):
+-    keys = ["ecc", "n_bits", "codeword_bits", "layer", "lam"]
++    keys = ["ecc", "n_bits", "codeword_bits", "layer", "lam", "wm_loss"]
+     out = []
+     for k, g in df.groupby(keys, sort=True):
+         diffs = g["acc_diff"].dropna().tolist()
+diff --git a/training/train_watermarked.py b/training/train_watermarked.py
+index 46f4b56..ef28ab0 100644
+--- a/training/train_watermarked.py
++++ b/training/train_watermarked.py
+@@ -2,8 +2,12 @@
+ 
+     python -m training.train_watermarked --seed 0 --epochs 30 --lam 1.0 --n-bits 32                  # Phase 3
+     python -m training.train_watermarked --seed 0 --epochs 30 --lam 1.0 --n-bits 256 --ecc rs32      # Phase 4
++    python -m training.train_watermarked --seed 0 --lam 20 --n-bits 256 --ecc rs32 \\
++        --wm-loss hinge --hinge-margin 2.5 --out-root runs/wm_v1                                    # accuracy fix
+ 
+-Total_Loss = CrossEntropy + lam * BCE(sigmoid(X @ v), codeword_bits)
++Total_Loss = CrossEntropy + lam * WM(X @ v, codeword_bits)
++WM = BCE-with-logits (default, Phases 3-6) or the margin-capped hinge (--wm-loss hinge), see
++embedding/projection.py. Hinge runs get a "_hinge<m>" suffix so they never overwrite BCE runs.
+ codeword = ECC-encoded first n_bits of the payload (with --ecc none it is the payload itself).
+ 
+ Same recipe as the baseline: SGD lr 0.05, momentum 0.9, Nesterov, wd 5e-4,
+@@ -25,7 +29,7 @@ from torch.utils.data import DataLoader
+ 
+ from embedding.ecc import get_code
+ from embedding.keys import key_fingerprint, load_key, load_payload_bits
+-from embedding.projection import ProjectionWatermark, get_weight
++from embedding.projection import WM_LOSSES, ProjectionWatermark, get_weight
+ from training.model import SmallCNN
+ from training.seed import set_seed
+ 
+@@ -33,13 +37,15 @@ MEAN, STD = (0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)
+ DEFAULT_LAYER = "features.6.0.weight"
+ 
+ 
+-def run_dir(out_root, lam, n_bits, ecc, layer, seed):
+-    """Phase 3 runs keep their old names (lam1_n32); ECC and a non-default layer extend the name."""
++def run_dir(out_root, lam, n_bits, ecc, layer, seed, wm_loss="bce", hinge_margin=None):
++    """Phase 3 runs keep their old names (lam1_n32); ECC, a non-default layer and the hinge loss extend it."""
+     name = "lam%g_n%d" % (lam, n_bits)
+     if ecc != "none":
+         name += "_" + ecc
+     if layer != DEFAULT_LAYER:
+         name += "_" + layer.replace(".weight", "")
++    if wm_loss == "hinge":
++        name += "_hinge%g" % hinge_margin
+     return Path(out_root) / name / ("seed%d" % seed)
+ 
+ 
+@@ -73,6 +79,10 @@ def main():
+     ap.add_argument("--ecc", default="none", help="none, rep<r> or rs<parity bytes>, see embedding/ecc.py")
+     ap.add_argument("--layer", default=DEFAULT_LAYER)
+     ap.add_argument("--mode", choices=["mean", "full"], default="mean")
++    ap.add_argument("--wm-loss", choices=WM_LOSSES, default="bce",
++                    help="bce (Phases 3-6) or hinge (margin-capped, stops pushing once |logit| >= margin)")
++    ap.add_argument("--hinge-margin", type=float, default=2.5,
++                    help="target |logit| for --wm-loss hinge (ignored for bce)")
+     ap.add_argument("--width", type=int, default=32)
+     ap.add_argument("--lr", type=float, default=0.05)
+     ap.add_argument("--batch-size", type=int, default=128)
+@@ -83,7 +93,8 @@ def main():
+     ap.add_argument("--force", action="store_true")
+     args = ap.parse_args()
+ 
+-    out = run_dir(args.out_root, args.lam, args.n_bits, args.ecc, args.layer, args.seed)
++    hinge_margin = args.hinge_margin if args.wm_loss == "hinge" else None
++    out = run_dir(args.out_root, args.lam, args.n_bits, args.ecc, args.layer, args.seed, args.wm_loss, hinge_margin)
+     if (out / "final.json").exists() and not args.force:
+         print("already finished, skipping:", out)
+         return
+@@ -99,10 +110,12 @@ def main():
+ 
+     model = SmallCNN(width=args.width).to(device)
+     num_params = sum(p.numel() for p in model.parameters())
+-    wm = ProjectionWatermark(key, args.layer, code.n_bits, args.mode, get_weight(model, args.layer).shape)
+-    print("params %d | layer %s %s | carrier dim %d | payload %d bits | ecc %s -> %d embedded bits | lam %g | device %s"
++    wm = ProjectionWatermark(key, args.layer, code.n_bits, args.mode, get_weight(model, args.layer).shape,
++                             loss_kind=args.wm_loss, margin=args.hinge_margin)
++    loss_desc = args.wm_loss if args.wm_loss == "bce" else "hinge m=%g" % args.hinge_margin
++    print("params %d | layer %s %s | carrier dim %d | payload %d bits | ecc %s -> %d embedded bits | lam %g | wm loss %s | device %s"
+           % (num_params, args.layer, tuple(get_weight(model, args.layer).shape), wm.dim, args.n_bits,
+-             args.ecc, code.n_bits, args.lam, device))
++             args.ecc, code.n_bits, args.lam, loss_desc, device))
+ 
+     train_loader, test_loader = make_loaders(args.data_root, args.batch_size)
+     opt = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True, weight_decay=5e-4)
+@@ -147,6 +160,7 @@ def main():
+     final = {"seed": args.seed, "epochs": args.epochs, "lam": args.lam, "n_bits": args.n_bits,
+              "ecc": args.ecc, "codeword_bits": code.n_bits,
+              "layer": args.layer, "mode": args.mode, "width": args.width, "num_params": num_params,
++             "wm_loss": args.wm_loss, "hinge_margin": hinge_margin,
+              "final_test_acc": acc, "bit_errors": errors, "ber": errors / code.n_bits,
+              "decoded_ok": dec["ok"], "decoded_errors": dec_errors,
+              "min_abs_logit": row[6], "payload_bits": "".join(map(str, payload)),
+```
+
+### A1.2: checks (local, Windows CPU, 2026-11-07)
+
+**Commands**
+
+```bash
+python -m pytest tests/test_hinge_loss.py -v
+python -m pytest tests -q
+python -m experiments.phase7.collect_runs --out <scratch dir>        # only to check the new column; results/phase7 not rewritten
+# 1-epoch CPU smoke run of the trainer with the hinge loss, then the unchanged verifier on it
+python -m training.train_watermarked --seed 0 --epochs 1 --lam 20 --n-bits 256 --ecc rs32 \
+    --wm-loss hinge --hinge-margin 2.5 --out-root <scratch dir>
+python -m verify.verify_model --model <scratch dir>/lam20_n256_rs32_hinge2.5/seed0/model.pt
+```
+
+**Output**
+
+```
+tests/test_hinge_loss.py: 7 passed
+pytest tests: 49 passed (42 before + 7 new)
+collect_runs: same 8 configs and numbers as results/phase7, new wm_loss column = bce for all
+
+tiny-model probe (Conv 16->32, 32 bits, SGD lr 0.5, wd 5e-4, watermark loss only):
+  bce   step 300: all bits right, |logit| min 2.08 mean 3.00 max 5.51 (still growing: mean 3.61 at step 600)
+  hinge step 300: all bits right, |logit| min 1.00 mean 1.13 max 2.06, loss 0.0000 (m = 1.0, stays there)
+
+smoke run (1 epoch, CPU, 83 s):
+  wm loss hinge m=2.5 | ep 1  cls 2.392  wm 0.2570  acc 0.3460  bit_errors 0/512  decoded 0/256  min|logit| 2.50
+  (BCE lam 20 after epoch 1: min|logit| 0.92)
+verify_model on the smoke model: all checks PASS, VERIFIED (256 bits match)
+```
+
+### A1.3: next, Colab (T4, about 8.5 min per run) — NOT RUN YET
+
+Same recipe as the chosen Phase 4 model (features.6.0, rs32, lam 20, 30 epochs), only the loss changes.
+Start with seed 0 at m = 2.5, then the sweep if it looks good:
+
+```bash
+python -m training.train_watermarked --seed 0 --epochs 30 --lam 20 --n-bits 256 --ecc rs32 \
+    --wm-loss hinge --hinge-margin 2.5 --out-root runs/wm_v1
+# sweep: --hinge-margin 1.5 / 2.5 / 3.5, --seed 0 1 2  (9 runs, about 80 min)
+python -m experiments.phase7.collect_runs            # compare against lam20_n256_rs32 (bce) row
+```
+
+Done-when: paired cost within 1 to 2 points (mean of 3 seeds), 0 decoded errors, min margin about the BCE
+model's 2.24. Then rerun the Phase 6 fine-tune and prune+fine-tune attacks on the hinge models: with hinge,
+every bit sits near m (BCE leaves most bits far above the minimum), so robustness has to be measured again.
