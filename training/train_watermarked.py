@@ -2,8 +2,12 @@
 
     python -m training.train_watermarked --seed 0 --epochs 30 --lam 1.0 --n-bits 32                  # Phase 3
     python -m training.train_watermarked --seed 0 --epochs 30 --lam 1.0 --n-bits 256 --ecc rs32      # Phase 4
+    python -m training.train_watermarked --seed 0 --lam 20 --n-bits 256 --ecc rs32 \\
+        --wm-loss hinge --hinge-margin 2.5 --out-root runs/wm_v1                                    # accuracy fix
 
-Total_Loss = CrossEntropy + lam * BCE(sigmoid(X @ v), codeword_bits)
+Total_Loss = CrossEntropy + lam * WM(X @ v, codeword_bits)
+WM = BCE-with-logits (default, Phases 3-6) or the margin-capped hinge (--wm-loss hinge), see
+embedding/projection.py. Hinge runs get a "_hinge<m>" suffix so they never overwrite BCE runs.
 codeword = ECC-encoded first n_bits of the payload (with --ecc none it is the payload itself).
 
 Same recipe as the baseline: SGD lr 0.05, momentum 0.9, Nesterov, wd 5e-4,
@@ -25,7 +29,7 @@ from torch.utils.data import DataLoader
 
 from embedding.ecc import get_code
 from embedding.keys import key_fingerprint, load_key, load_payload_bits
-from embedding.projection import ProjectionWatermark, get_weight
+from embedding.projection import WM_LOSSES, ProjectionWatermark, get_weight
 from training.model import SmallCNN
 from training.seed import set_seed
 
@@ -33,13 +37,15 @@ MEAN, STD = (0.4914, 0.4822, 0.4465), (0.2470, 0.2435, 0.2616)
 DEFAULT_LAYER = "features.6.0.weight"
 
 
-def run_dir(out_root, lam, n_bits, ecc, layer, seed):
-    """Phase 3 runs keep their old names (lam1_n32); ECC and a non-default layer extend the name."""
+def run_dir(out_root, lam, n_bits, ecc, layer, seed, wm_loss="bce", hinge_margin=None):
+    """Phase 3 runs keep their old names (lam1_n32); ECC, a non-default layer and the hinge loss extend it."""
     name = "lam%g_n%d" % (lam, n_bits)
     if ecc != "none":
         name += "_" + ecc
     if layer != DEFAULT_LAYER:
         name += "_" + layer.replace(".weight", "")
+    if wm_loss == "hinge":
+        name += "_hinge%g" % hinge_margin
     return Path(out_root) / name / ("seed%d" % seed)
 
 
@@ -73,6 +79,10 @@ def main():
     ap.add_argument("--ecc", default="none", help="none, rep<r> or rs<parity bytes>, see embedding/ecc.py")
     ap.add_argument("--layer", default=DEFAULT_LAYER)
     ap.add_argument("--mode", choices=["mean", "full"], default="mean")
+    ap.add_argument("--wm-loss", choices=WM_LOSSES, default="bce",
+                    help="bce (Phases 3-6) or hinge (margin-capped, stops pushing once |logit| >= margin)")
+    ap.add_argument("--hinge-margin", type=float, default=2.5,
+                    help="target |logit| for --wm-loss hinge (ignored for bce)")
     ap.add_argument("--width", type=int, default=32)
     ap.add_argument("--lr", type=float, default=0.05)
     ap.add_argument("--batch-size", type=int, default=128)
@@ -83,7 +93,8 @@ def main():
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
 
-    out = run_dir(args.out_root, args.lam, args.n_bits, args.ecc, args.layer, args.seed)
+    hinge_margin = args.hinge_margin if args.wm_loss == "hinge" else None
+    out = run_dir(args.out_root, args.lam, args.n_bits, args.ecc, args.layer, args.seed, args.wm_loss, hinge_margin)
     if (out / "final.json").exists() and not args.force:
         print("already finished, skipping:", out)
         return
@@ -99,10 +110,12 @@ def main():
 
     model = SmallCNN(width=args.width).to(device)
     num_params = sum(p.numel() for p in model.parameters())
-    wm = ProjectionWatermark(key, args.layer, code.n_bits, args.mode, get_weight(model, args.layer).shape)
-    print("params %d | layer %s %s | carrier dim %d | payload %d bits | ecc %s -> %d embedded bits | lam %g | device %s"
+    wm = ProjectionWatermark(key, args.layer, code.n_bits, args.mode, get_weight(model, args.layer).shape,
+                             loss_kind=args.wm_loss, margin=args.hinge_margin)
+    loss_desc = args.wm_loss if args.wm_loss == "bce" else "hinge m=%g" % args.hinge_margin
+    print("params %d | layer %s %s | carrier dim %d | payload %d bits | ecc %s -> %d embedded bits | lam %g | wm loss %s | device %s"
           % (num_params, args.layer, tuple(get_weight(model, args.layer).shape), wm.dim, args.n_bits,
-             args.ecc, code.n_bits, args.lam, device))
+             args.ecc, code.n_bits, args.lam, loss_desc, device))
 
     train_loader, test_loader = make_loaders(args.data_root, args.batch_size)
     opt = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, nesterov=True, weight_decay=5e-4)
@@ -147,6 +160,7 @@ def main():
     final = {"seed": args.seed, "epochs": args.epochs, "lam": args.lam, "n_bits": args.n_bits,
              "ecc": args.ecc, "codeword_bits": code.n_bits,
              "layer": args.layer, "mode": args.mode, "width": args.width, "num_params": num_params,
+             "wm_loss": args.wm_loss, "hinge_margin": hinge_margin,
              "final_test_acc": acc, "bit_errors": errors, "ber": errors / code.n_bits,
              "decoded_ok": dec["ok"], "decoded_errors": dec_errors,
              "min_abs_logit": row[6], "payload_bits": "".join(map(str, payload)),

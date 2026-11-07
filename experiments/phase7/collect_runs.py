@@ -6,7 +6,7 @@
 Reads   runs/<root>/<run name>/seed<N>/final.json   (written by training/train_watermarked.py)
         runs/baseline/seed<N>/final.json            (written by training/train_baseline.py)
 Writes  results/phase7/wm_runs.csv        one row per trained model
-        results/phase7/wm_config_summary.csv   one row per (ecc, n_bits, layer, lam), mean +- std over seeds
+        results/phase7/wm_config_summary.csv   one row per (ecc, n_bits, layer, lam, wm_loss), mean +- std over seeds
 Accuracy differences are PAIRED: watermarked seed N minus baseline seed N (same as experiments/run_phase4.py).
 """
 import argparse
@@ -26,6 +26,12 @@ def load_baselines(baseline_dir):
     return out
 
 
+def wm_loss_label(d):
+    """'bce' for runs before the hinge option existed (no wm_loss key), else 'bce' or 'hinge<m>'."""
+    kind = d.get("wm_loss", "bce")
+    return kind if kind == "bce" else "%s%g" % (kind, d["hinge_margin"])
+
+
 def load_runs(roots, baselines):
     rows = []
     for root in roots:
@@ -37,7 +43,7 @@ def load_runs(roots, baselines):
             base = baselines.get(seed)
             rows.append({
                 "root": str(root), "run": f.parent.parent.name, "seed": seed,
-                "lam": d["lam"], "n_bits": d["n_bits"], "ecc": d["ecc"],
+                "lam": d["lam"], "wm_loss": wm_loss_label(d), "n_bits": d["n_bits"], "ecc": d["ecc"],
                 "codeword_bits": d["codeword_bits"], "layer": d["layer"], "mode": d.get("mode", "mean"),
                 "epochs": d.get("epochs"), "acc": d["final_test_acc"], "base_acc": base,
                 "acc_diff": None if base is None else d["final_test_acc"] - base,
@@ -49,7 +55,7 @@ def load_runs(roots, baselines):
 
 
 def summarize(df):
-    keys = ["ecc", "n_bits", "codeword_bits", "layer", "lam"]
+    keys = ["ecc", "n_bits", "codeword_bits", "layer", "lam", "wm_loss"]
     out = []
     for k, g in df.groupby(keys, sort=True):
         diffs = g["acc_diff"].dropna().tolist()
