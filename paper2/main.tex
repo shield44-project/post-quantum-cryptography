@@ -1,0 +1,670 @@
+% ORIGINAL RESEARCH DRAFT -- VERSION 2 (EDITORIAL REVISION), 23 NOVEMBER 2026
+% Evidence base: PKgamerzop/pq-watermark-2.0, phase6 commit fc526ae62...
+% and scientific corrections on paper-audit-fixes / paper-ieee-final.
+% Version 2 changes wording, organization and framing only. All numerical
+% results, denominators, equations, labels and figure placeholders from
+% Version 1 are unchanged. See REVISION_NOTES.md for the author-approval list.
+% WARNING: This is NOT a conference-specific camera-ready template.
+% Authors must verify all content, authorship, AI disclosures and venue policies.
+% To add original figures: place PDFs at the paths named in each \figslot call.
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+\usepackage{cite}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{balance}
+\usepackage{microtype}
+
+% A missing image is deliberately rendered as a labeled placeholder. Replace
+% each one with an ORIGINAL diagram/plot generated from the project data.
+\newcommand{\figslot}[3]{%
+  \IfFileExists{#1}{\includegraphics[width=\linewidth]{#1}}{%
+  \fbox{\begin{minipage}[c][#2][c]{0.94\linewidth}
+     \centering\footnotesize\sffamily\bfseries FIGURE PLACEHOLDER\\[3pt]
+     \normalfont\sffamily #3\\[3pt]
+     \scriptsize Replace with an original, data-based figure.
+  \end{minipage}}}}
+
+\title{Post-Quantum-Signed Model Provenance Through Neural Weight Watermarking: An Empirical Study of Accuracy and Overwrite Resistance}
+
+% AUTHOR CHECK: Names and affiliations below are taken from the project's
+% existing conference source. Confirm authorship, order, spelling and whether
+% the target venue requires anonymity BEFORE submission.
+\author{\IEEEauthorblockN{Prajjith Kumar, Thejas K S, Krishnadasa Raja, and S Mahith Shree Vema Reddy}
+\IEEEauthorblockA{RV College of Engineering, Bengaluru, India\\
+% Insert individually verified institutional email addresses when appropriate.
+}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A digital signature authenticates a release record, but byte-exact signature
+verification does not reveal whether a modified neural-network checkpoint is
+still associated with that release. We study a white-box provenance prototype
+that combines a SHA-256 dataset commitment, an ML-DSA-65-signed manifest, and a
+secret-keyed, Reed--Solomon-coded watermark embedded in convolutional weights.
+A trusted auditor compares the extracted 256-bit manifest digest and can retry
+extraction after specified channel permutations and positive scalings. Our
+central question is how the watermark-training objective trades classifier
+accuracy against resistance to an adversarial overwrite. On CIFAR-10 with a
+160,234-parameter SmallCNN, five paired training seeds give mean test
+accuracies of 84.60\% (unmarked), 82.37\% (binary cross-entropy with RS32,
+i.e., 32 parity bytes), and 84.10\% (hinge with RS32). Hinge improves mean
+accuracy over the BCE configuration by 1.73 percentage points, but all three
+hinge checkpoints tested under a 512-bit same-layer overwrite become rejected
+with accuracy losses of 3.38--4.71 points; no successful removal is recorded
+for either BCE configuration in the tested suite. Across three watermark
+designs, the archive contains 252 checkpoint evaluations per design, including
+repeated attacks. All 189 recorded permutation/combined-edit and input-scaling
+evaluations verify exactly with retries available, and 778 sampled negative
+controls produce no detections. These findings indicate an
+accuracy--overwrite tradeoff in the evaluated setting; they are not a proof of
+ownership, a general robustness result, or an end-to-end false-accept
+guarantee.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Neural-network watermarking, model provenance, post-quantum signatures,
+ML-DSA-65, Reed--Solomon coding, structural obfuscation, adversarial overwrite.
+\end{IEEEkeywords}
+
+\section{Introduction}
+\label{sec:introduction}
+Distributing a trained model raises two related but distinct verification
+problems. A signed manifest can authenticate a developer's statement about a
+particular release. Once a model is pruned, quantized, fine-tuned, or
+reparameterized, however, the checkpoint's bytes may no longer match the
+original artifact, and the signature alone cannot say whether the modified
+checkpoint still belongs to that release. A mark carried in the weights could
+supply additional evidence linking the checkpoint to its signed release without
+requiring identical files. Such evidence is useful only if its trust
+assumptions and its behavior under model modifications are stated explicitly.
+
+Post-quantum digital signatures are relevant to long-lived release records:
+a sufficiently capable quantum computer running Shor's algorithm would threaten
+classical schemes based on integer factorization or discrete logarithms
+\cite{shor1994algorithms}. NIST standardized the lattice-based ML-DSA signature
+scheme in FIPS~204 \cite{nist204}. Replacing a release signature, however, does
+not make a neural watermark quantum-secure, and a watermark does not establish
+who legally owns a model. The two mechanisms provide different, complementary
+checks.
+
+Parameter watermarking is well established \cite{uchida2017embedding}, and
+studies of removal attacks and structural obfuscation have shown that a mark
+which survives ordinary fine-tuning need not survive more deliberate
+modifications \cite{lukas2022sok,yan2023rethinking}. We therefore do not
+present a digital signature or a weight projection as new. The open point we
+address is narrower and practical. A signed release record and a weight
+watermark are different kinds of evidence, and their combination raises two
+questions that a deployment must answer together: what the embedding objective
+costs the host classifier in clean accuracy, and how the resulting mark fares
+under deliberate overwriting. A mark should be judged on both, because a
+training objective can improve one at the expense of the other. We measure
+them jointly, on paired training seeds and under a common attack suite.
+
+We address three research questions. \emph{(RQ1)} What clean-accuracy cost
+accompanies training a full-digest, error-corrected weight mark? \emph{(RQ2)}
+How do binary-cross-entropy (BCE) and margin-capped hinge objectives compare
+under accuracy-constrained overwriting? \emph{(RQ3)} Which recorded changes
+preserve exact recovery, residual evidence, or neither, and how should those
+outcomes be interpreted? Our contributions are as follows.
+\begin{itemize}
+\item We implement a testable release-to-checkpoint association: an ordered
+SHA-256 Merkle dataset commitment and ML-DSA-65 manifest signature external to
+the model, plus a full 256-bit digest embedded as a keyed, error-corrected
+weight projection.
+\item We specify a trusted white-box verifier with exact digest comparison,
+structural extraction retries, and a distinct residual-agreement verdict. We
+state the limited probability model behind the retry-eligibility rule rather
+than treating it as a proof of overall false acceptance.
+\item We compare BCE/RS32, BCE/RS16, and hinge/RS32 on paired training seeds
+and a saved attack suite. The central empirical result is a tradeoff: the
+hinge objective gives higher clean accuracy than BCE/RS32, but lower resistance
+to the specified same-layer overwrite.
+\end{itemize}
+
+\emph{Scope of claims.} We use three terms precisely. \emph{Signature
+authentication} means that a manifest verifies under a trusted public key.
+\emph{Model association} means that a submitted checkpoint carries a payload
+matching that manifest's digest under a pinned extraction profile and a
+protected watermark key (Section~\ref{sec:design}). \emph{Proof of ownership}
+is not established by either mechanism, and we make no such claim. The rest of
+the paper is organized as follows: Section~\ref{sec:related} positions the work,
+Section~\ref{sec:design} describes the design and verifier,
+Section~\ref{sec:setup} gives the protocol, Section~\ref{sec:results} reports
+results, and Section~\ref{sec:discussion} states limitations.
+
+\section{Prior Work and Positioning}
+\label{sec:related}
+\subsection{Neural Watermarks and Adversarial Evaluation}
+Uchida \emph{et al.} introduced weight-regularized neural watermarking, which
+uses model parameters and a projection-based extraction rule
+\cite{uchida2017embedding}. Our parameter carrier and BCE baseline build on
+that line of work; we do not claim to originate the projection mechanism.
+Other work uses queries to a model rather than its weights. For example, Adi
+\emph{et al.} proposed a black-box watermark based on backdoor behavior
+\cite{adi2018backdooring}. Black-box and white-box marks support different
+verification settings and cannot be compared using raw detection percentages
+alone.
+
+Lukas \emph{et al.} studied the robustness of image-classification
+watermarks under removal attacks and emphasized the importance of adversarial
+evaluation \cite{lukas2022sok}. Yan \emph{et al.} examined neural structural
+obfuscation, including function-preserving transformations and dummy-neuron
+constructions \cite{yan2023rethinking}. We evaluate selected compensated
+permutations and scalings with a trusted extraction key; our verifier does
+\emph{not} address the full structural-obfuscation attack space. We also study
+an overwrite that trains a competing mark into the same layer, and we report
+the victim's classifier accuracy as a separate outcome rather than folding it
+into a detection rate.
+
+\subsection{Post-Quantum Release Authentication}
+ML-DSA-65 provides standardized digital signatures for release statements
+\cite{nist204}. Post-quantum signing of federated model updates
+\cite{li2024federated} and model-bill-of-materials attestation
+\cite{campbell2026mbom} address adjacent supply-chain questions. Work on
+post-quantum-assisted watermarking of generated media, such as diffusion-model
+outputs \cite{hu2026diffusion}, addresses a different carrier and threat
+model from classifier parameters.
+
+\subsection{Positioning of This Study}
+The cited lines of work address, respectively, weight and black-box watermarks,
+the evaluation of their removal resistance, and post-quantum authentication of
+statements or supply-chain records. Our contribution lies in their integration
+and measurement, not in any one component. We bind a signed manifest to a
+separately keyed model-weight association, and we measure how the choice of
+embedding objective shifts the balance between clean accuracy and overwrite
+resistance. The experiments are not a cryptographic comparison with the
+post-quantum systems above, and they are not a head-to-head comparison with
+other watermarking schemes.
+
+\section{Design and Verification Model}
+\label{sec:design}
+\begin{figure*}[!t]
+ \centering
+ \figslot{figures/system_workflow.png}{1.22in}{Two-lane pipeline: signed release creation (top) and trusted white-box checkpoint verification (bottom).}
+ \caption{Proposed release-to-checkpoint association. The ML-DSA-65 signature authenticates the manifest under a trusted public key; the separately keyed watermark is evidence of checkpoint association. Dataset comparison is an optional, distinct check.}
+ \label{fig:workflow}
+\end{figure*}
+
+\subsection{Actors, Scope, and Authenticated Claims}
+A developer prepares a model release and its signed manifest. A trusted auditor
+has white-box access to a suspect checkpoint, obtains the developer's public
+signing key through an independent channel, and protects a separate secret
+watermark key. The auditor pins the extraction profile---carrier layer,
+aggregation mode, coding variant, full payload length, and alignment policy---
+to trusted release context. The reference implementation can otherwise accept
+settings from an unsigned command line or local sidecar; our verification
+claims assume the auditor does not allow an adversary to select these settings.
+The legacy short-payload override is disabled.
+
+The evaluated remover can modify the weights. Its same-layer overwrite knows
+the carrier and trains a competing mark using another key, but is not given
+the original watermark key or unrestricted access to an adaptive verification
+oracle. We also evaluate unrelated weights, wrong keys, and selected tampered
+records. These settings do not cover key compromise, black-box extraction,
+distillation, model-width changes, or unlimited adaptive submissions.
+
+Table~\ref{tab:claims} summarizes what each component does and does not
+establish. A valid signature establishes authentication of the signed statement
+under the trusted public key. A matching model watermark supports association
+with that statement under the specified extractor. A Merkle root commits to an
+ordered byte representation of a dataset. None of these observations alone
+establishes that the committed data were actually used for training, that the
+dataset is legally owned, or that a self-declared timestamp proves priority.
+
+\begin{table}[!t]
+\centering\caption{Scope of Each Verification Component. None Is a Proof of Ownership.}
+\label{tab:claims}\scriptsize\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.1}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.2\columnwidth}>{\raggedright\arraybackslash}p{0.36\columnwidth}>{\raggedright\arraybackslash}p{0.36\columnwidth}@{}}
+\toprule
+Component & Supports & Does not establish\\
+\midrule
+ML-DSA-65 signature on the manifest & Authentication of the signed statement under the trusted public key & Any property of a specific checkpoint; model creation or ownership\\
+Watermark verdict \textsc{Verified} & Exact 256-bit digest match: association of the weights with the signed manifest under the pinned profile and key & Ownership, training history, or security against key compromise or adaptive adversaries\\
+Watermark verdict \textsc{Damaged} & Residual agreement with the expected codeword above a cutoff, without an exact match & Exact recovery; a probability of origin\\
+Merkle dataset root & Commitment to an ordered byte representation of a dataset & Actual use in training; legal ownership; priority\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Dataset Commitment and Signed Manifest}
+For the ordered CIFAR-10 training split, the implementation hashes each labeled
+sample using an index and separate domains for leaf and internal nodes. For
+sample index $i$, class label $y_i$, and the raw height--width--channel byte
+string $x_i$, the leaf is
+\begin{equation}
+ h_i=H\!\left(\texttt{0x00}\parallel\operatorname{u64be}(i)
+ \parallel\operatorname{u16be}(y_i)\parallel x_i\right),
+ \label{eq:leaf}
+\end{equation}
+where $H$ is SHA-256 and $\parallel$ denotes concatenation. Parent nodes use
+$H(\texttt{0x01}\parallel h_L\parallel h_R)$; an unpaired node is promoted
+without duplication. This yields a 32-byte root committing to the ordered
+50,000-image representation, subject to the assumed collision resistance and
+fixed serialization \cite{merkle1987digital,cifar10}.
+
+The root and release metadata are placed in a project-defined deterministic
+JSON serialization with sorted keys, compact separators, and ASCII escaping
+before UTF-8 encoding. The manifest records the developer identifier, public
+key identifier, dataset description, model architecture and parameter count,
+payload length, and a UTC timestamp. Let $M$ be the serialized bytes. The
+record is signed using ML-DSA-65 \cite{nist204}, and the embedded payload is
+\begin{equation}
+ p=\operatorname{SHA256}(M)\in\{0,1\}^{256}.
+ \label{eq:payload}
+\end{equation}
+An ML-DSA-65 signature (3,309 bytes) and public key (1,952 bytes) are kept
+outside the model weights; the smaller digest is the actual watermark payload.
+Signing the manifest and embedding its digest should not be confused with
+signing the model weights themselves.
+
+\subsection{Keyed Carrier and Error-Corrected Payload}
+We select the final convolutional weight tensor of shape
+$128\times64\times3\times3$ (\texttt{features.6.0.weight}).
+Averaging its 128 output filters gives a $d=576$-dimensional carrier
+$v\in\mathbb{R}^{576}$. A deterministic secret-keyed $\{-1,+1\}$ projection
+matrix $X\in\mathbb{R}^{n\times576}$ is obtained through a domain-separated
+SHA-256 derivation followed by SHAKE-256 expansion. Its output scores are
+$z=Xv$; a score strictly above zero encodes bit one, otherwise bit zero.
+Averaging makes this carrier invariant to output-filter permutation in exact
+arithmetic, but not inherently invariant to all layer transformations.
+
+The 32-byte payload is systematically encoded using Reed--Solomon coding
+over $\mathrm{GF}(256)$ \cite{reed1960polynomial}. RS32 adds 32 parity
+bytes, producing $n=512$ embedded bits; RS16 adds 16 parity bytes, producing
+$n=384$. Both encode the same 256-bit manifest digest. With $r$ parity
+bytes, bounded-distance decoding can correct $e$ erroneous bytes and $f$
+known erasures when $2e+f\le r$; confidence-based erasure selection does not
+remove that condition.
+
+For codeword bits $b_j\in\{0,1\}$, define $s_j=2b_j-1$. With task
+cross-entropy $\mathcal{L}_{\mathrm{cls}}$, we train using
+\begin{equation}
+ \mathcal{L}=\mathcal{L}_{\mathrm{cls}}+
+ \lambda\mathcal{L}_{\mathrm{wm}},
+ \label{eq:total}
+\end{equation}
+where the two investigated watermark penalties are
+\begin{align}
+ \mathcal{L}_{\mathrm{BCE}}&=\frac1n\sum_{j=1}^n
+ \log\!\left(1+e^{-s_jz_j}\right),\label{eq:bce}\\
+ \mathcal{L}_{\mathrm{hinge}}&=\frac1n\sum_{j=1}^n
+ \max\{0,m-s_jz_j\}.\label{eq:hinge}
+\end{align}
+At finite signed margins, BCE continues to encourage increasing score
+magnitudes. The hinge term ceases contributing a watermark gradient for a bit
+once its signed score reaches the prescribed margin $m$, although task loss
+and weight decay can still change the weights. This gradient difference
+motivates, but does not prove, a connection to the observed overwrite
+behavior.
+
+\subsection{Exact Recovery, Structural Retries, and Residual Evidence}
+The verifier first checks release authenticity, the public-key identifier,
+payload consistency, supported architecture, parameter count, and finite
+model tensors. The reported profile assumes restricted PyTorch tensor loading;
+a legacy fallback on older environments must not be treated as satisfying
+that assumption. For a candidate carrier, the decoder attempts hard RS
+decoding, then retries with 2, 4, $\ldots$, $r/2$ low-confidence byte
+erasures. Byte confidence is the smallest absolute bit score in the byte.
+The first decoder success ends that candidate's erasure schedule, but only a
+full 256-bit digest match can yield \textsc{Verified}.
+
+If raw extraction does not match, the enabled verifier may attempt a
+key-dependent channel-block assignment, a positive-scale fit, and an
+assignment on normalized blocks followed by scaling. The assignment
+maximizes a signed-score sum over channel permutations (a linear assignment
+problem \cite{kuhn1955hungarian}). The positive-scale
+linear program maximizes the worst signed score under a normalization and a
+positive lower bound. These are search procedures, not guaranteed inverses
+of arbitrary obfuscations. The archived structural outcomes were recorded
+with such retries available; they do not provide a matched ablation with the
+retry mechanism disabled.
+
+An eligibility test uses Cover's count of strict homogeneous sign patterns
+\cite{cover1965geometrical}. For $n$ fixed rows in $C$ dimensions, with a
+\emph{uniform independently sampled} target sign vector, the share of
+strict patterns realizable by an unrestricted real scale vector is bounded by
+\begin{equation}
+ B(n,C)=2^{1-n}\sum_{k=0}^{C-1}\binom{n-1}{k}.
+ \label{eq:cover}
+\end{equation}
+With $C=64$, $\log_2 B$ is approximately $-239.71$ for RS32 and $-139.86$
+for RS16. These values motivate the implemented retry gate. They do not
+bound the full verifier: the actual target is a structured RS codeword,
+assignment is target-dependent, and decoding accepts certain incorrect raw
+sign patterns. No general false-accept probability for the complete
+assignment-plus-decoder pipeline is claimed.
+
+After raw and permitted retries fail exact comparison, the verifier may
+report \textsc{Damaged} when the original-order carrier still agrees with
+the expected codeword on enough positions. Writing
+$\widehat b_j=\mathbf{1}[z_j>0]$, define
+\begin{equation}
+ k=\sum_{j=1}^n \mathbf{1}[\widehat b_j=b_j].
+ \label{eq:agree}
+\end{equation}
+The cutoffs are $k\ge358$ for RS32 and $k\ge280$ for RS16. Under a
+prespecified, one-shot comparison whose hard decisions are independent fair
+bits, the corresponding binomial upper tails are about $2^{-64.19}$ and
+$2^{-64.21}$. This is a \emph{conditional null calculation}, not an empirical
+adaptive-forgery rate or a probability that a model has a particular origin.
+Extraction or structural-check failure, or inadequate agreement, leads to
+\textsc{Rejected}. Only \textsc{Verified} is an exact digest match.
+
+\section{Experimental Protocol}
+\label{sec:setup}
+\subsection{Model, Data, and Training}
+Experiments use CIFAR-10's 50,000 training and 10,000 test examples
+\cite{cifar10} with a width-32 SmallCNN: five convolution--BatchNorm--ReLU
+blocks, three max-pooling stages, a dropout-0.3 classifier head, and 160,234
+trainable parameters. Training uses random crops with padding four,
+horizontal flips, CIFAR-10 normalization, SGD with Nesterov momentum 0.9 and
+weight decay $5\times10^{-4}$, batch size 128, an initial learning rate of
+0.05, and a 30-epoch cosine schedule. The archived Colab training setup uses
+a Tesla T4. The principal watermark configurations set $\lambda=20$, the
+final convolution as carrier, and $m=1.5$ for hinge/RS32. We use independent
+training seeds 0--4 where available.
+
+Clean accuracy is measured on five baseline, five BCE/RS32, and five
+hinge/RS32 checkpoints. BCE/RS16 has three trained checkpoints (seeds 0--2).
+The main robustness comparison reuses the first three trained checkpoints
+per marked design. It does not constitute 252 independent training trials:
+per design, each of three parents produces 84 recorded evaluations across
+47 modifications and one clean configuration. Some configurations are
+repeated with stochastic attack draws, giving 252 rows per design. The same
+release, watermark key, and test set are reused. The implementation and saved
+artifacts are archived at an immutable project revision \cite{projectResults}.
+
+\subsection{Attacks, Outcomes, and Utility Constraint}
+The attack suite covers Gaussian weight noise, global and carrier-layer
+magnitude pruning, FP16 and low-bit quantization, channel permutations,
+positive compensating scalings, ordinary and post-pruning fine-tuning, and
+same-layer watermark overwrites. The 128- and 512-bit overwrites train a
+competing mark on a 20\% CIFAR-10 training subset for 10 epochs, with learning
+rate 0.01 and watermark weight $\lambda=20$. Their attacker settings are
+shared across the marked designs; this does not match their pre-attack
+margins or attacker bit-error rates.
+
+We record \textsc{Verified}, \textsc{Damaged}, and \textsc{Rejected} separately
+from test accuracy. For a parent model with clean accuracy $a_0$ and attacked
+accuracy $a$ (both expressed as fractions of the test set), an operational
+\emph{successful removal} requires
+\begin{equation}
+ \textsc{Rejected}\quad\text{and}\quad a_0-a\le0.05.
+ \label{eq:removal}
+\end{equation}
+The five-point budget is relative to each parent; it does not impose an
+absolute minimum accuracy. Accuracy alone cannot establish preservation of
+functionally identical predictions, and a decoded mark can survive even when
+the classifier becomes practically unusable. All comparative rates are
+descriptive, with parent-model and key reuse explicitly acknowledged.
+
+\section{Results}
+\label{sec:results}
+The central result is an accuracy--overwrite tradeoff. Hinge/RS32 attains a
+higher mean clean accuracy than BCE/RS32 (84.10\% versus 82.37\%) but, under
+the 512-bit same-layer overwrite, all three hinge checkpoints are
+\textsc{Rejected} within the five-point budget, whereas all six BCE
+checkpoints remain \textsc{Damaged}. The subsections below give the paired
+accuracy evidence (RQ1), the overwrite evidence (RQ2), and the transformation
+and control results (RQ3).
+
+\subsection{RQ1: Clean Accuracy and Carrier Structure}
+Table~\ref{tab:clean} reports the paired training results. The five-seed
+baseline mean is 84.60\%; BCE/RS32 yields 82.37\%, a mean paired loss of
+2.23 percentage points. Hinge/RS32 reaches 84.10\%, a mean paired loss of
+0.50 points. Hinge exceeds BCE/RS32 in every one of the five matched seeds,
+with paired differences of 1.71, 2.40, 2.17, 0.92, and 1.46 points (mean
+1.73). This is a descriptive, five-pair observation, not a population-level
+significance claim. The three-seed BCE/RS16 mean of 82.26\% should be compared
+with BCE/RS32's matched three-seed mean of 81.98\%, not its five-seed mean.
+All 13 main marked training summaries report zero decoded payload errors.
+
+\begin{table}[!t]
+\centering\caption{Paired CIFAR-10 Test Accuracy (\%)}
+\label{tab:clean}\footnotesize\setlength{\tabcolsep}{3.6pt}
+\begin{tabular}{@{}crrrr@{}}
+\toprule
+Seed & Base & BCE/RS16 & BCE/RS32 & Hinge/RS32\\
+\midrule
+0 & 86.12 & 82.09 & 83.08 & 84.79\\
+1 & 85.32 & 80.75 & 80.33 & 82.73\\
+2 & 83.78 & 83.95 & 82.52 & 84.69\\
+3 & 81.98 & -- & 82.84 & 83.76\\
+4 & 85.78 & -- & 83.07 & 84.53\\
+\midrule
+Mean & 84.60 & 82.26 & 82.37 & 84.10\\
+Paired $\Delta$ (pt) & -- & $-2.81$ & $-2.23$ & $-0.50$\\
+\bottomrule
+\end{tabular}
+\vspace{2pt}
+\parbox{0.95\columnwidth}{\scriptsize BCE/RS16 uses seeds 0--2; its paired difference uses those baseline seeds. Other means use seeds 0--4.}
+\end{table}
+
+\begin{figure}[!t]
+\centering\figslot{figures/paired_accuracy.png}{1.18in}{Paired clean accuracy by seed for baseline, BCE/RS32, hinge/RS32, and the three RS16 seeds.}
+\caption{Clean accuracy for the available training seeds. Paired seed comparisons, rather than aggregate means with unequal denominators, are the primary evidence for the loss-function tradeoff.}
+\label{fig:acc}
+\end{figure}
+
+Averaging the carrier filters reveals an associated change in layer weights.
+Across seeds 0--2 the mean-filter norm is approximately 5.05 for BCE/RS32
+versus 2.39 for hinge/RS32. The fraction of carrier-layer squared norm in
+the shared mean component is approximately 97\% for BCE and 88--89\% for
+hinge. Clean minimum absolute projection scores in the saved main runs are
+2.24 (BCE/RS32), 2.70 (BCE/RS16), and 1.50 (hinge/RS32). The measurements
+suggest a different distribution of embedding effort, but do not by
+themselves prove what causes either classification loss or overwrite
+susceptibility. A single-seed BCE strength sweep ($\lambda=1,5,20$) yielded
+84.67\%, 83.19\%, and 83.08\% clean accuracy, respectively, with minimum
+absolute scores 0.02, 1.21, and 2.25; it is exploratory rather than a
+multi-seed dose-response study.
+
+\subsection{RQ2: Overwrite Resistance and Classifier Utility}
+\begin{table}[!t]
+\centering\caption{Recorded Outcomes Over 252 Evaluations per Design}
+\label{tab:verdicts}\footnotesize\setlength{\tabcolsep}{3.3pt}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Design & Verified & Damaged & Rejected & Removals\\
+\midrule
+BCE/RS32 & 231 & 20 & 1 & 0\\
+BCE/RS16 & 240 & 12 & 0 & 0\\
+Hinge/RS32 & 233 & 13 & 6 & 3\\
+\bottomrule
+\end{tabular}
+\vspace{2pt}
+\parbox{0.96\columnwidth}{\scriptsize Includes one clean configuration per seed. Each design uses three independent trained parent checkpoints, not 252 independent models.}
+\end{table}
+
+The 252 verdict counts per design are shown in Table~\ref{tab:verdicts}.
+The decisive difference appears under the 512-bit same-layer overwrite
+(Table~\ref{tab:overwrite}): every tested hinge model is \textsc{Rejected}
+with a clean-to-attacked test-accuracy drop between 3.38 and 4.71 points,
+within the specified five-point budget. All six BCE models evaluated in the
+same overwrite setting (three per coding variant) are instead
+\textsc{Damaged}; one BCE/RS32 and two BCE/RS16 trials meet the utility
+budget. Thus the observed hinge accuracy benefit coexists with reduced
+resistance to this particular watermark-removal setting.
+
+\begin{table}[!t]
+\centering\caption{Same-Layer 512-bit Overwrite, Seeds 0--2}
+\label{tab:overwrite}\footnotesize\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}llrrl@{}}
+\toprule
+Design & Seed & Attacked acc. & Drop (pt) & Verdict\\
+\midrule
+BCE/RS32 & 0 & 77.79\% & 5.29 & Damaged\\
+ & 1 & 74.03\% & 6.30 & Damaged\\
+ & 2 & 78.19\% & 4.33 & Damaged\\
+BCE/RS16 & 0 & 75.31\% & 6.78 & Damaged\\
+ & 1 & 77.35\% & 3.40 & Damaged\\
+ & 2 & 80.10\% & 3.85 & Damaged\\
+Hinge/RS32 & 0 & 80.08\% & 4.71 & Rejected\\
+ & 1 & 79.35\% & 3.38 & Rejected\\
+ & 2 & 80.21\% & 4.48 & Rejected\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure*}[!t]
+\centering\figslot{figures/robustness_overwrite.png}{1.48in}{Left: stacked counts VERIFIED/DAMAGED/REJECTED for the three designs. Right: per-seed accuracy drop under 512-bit overwrite with verdict marks and five-point budget.}
+\caption{Two complementary views of robustness. Left: recorded verdict counts across the full suite, including clean controls. Right: per-parent utility impact of the 512-bit overwrite. Only rejections at or below the five-point drop threshold qualify as successful removals.}
+\label{fig:overwrites}
+\end{figure*}
+
+The other three hinge rejections arise under two-bit quantization, where
+mean test accuracy was only 9.90\%; they are not successful removals under
+Eq.~\eqref{eq:removal}. Conversely, a \textsc{Damaged} verdict does not mean
+that the original digest was exactly recovered. At the weaker 128-bit
+overwrite, BCE/RS16 verified exactly in all three recorded tests.
+
+\subsection{RQ3: Transformations, Error Correction, and Negative Controls}
+All 108 recorded evaluations of the specified permutations and combined
+permutation/input-scale modification yielded exact matches. Another 81
+input-scaling-only evaluations also verified, with unchanged recorded test
+accuracy: 189 of 189 in these two families. An additional 81 output-side
+rescaling evaluations verified, with absolute measured accuracy changes of
+at most 0.07 points. The verifier was run with retries enabled, but the
+archive does not identify which candidate succeeded in each case and does
+not contain a matched, current-verifier disabled-retry replay. These results
+therefore establish recorded exact recovery, not the isolated causal benefit
+of each retry.
+
+\begin{figure}[!t]
+\centering\figslot{figures/structural_edits.png}{1.12in}{For seven recorded structural configurations, show observed mean clean-relative sign-change rate and the exact verified count (9/9 per design per setting).}
+\caption{Selected structural transformations for BCE/RS32, BCE/RS16, and hinge/RS32. Each of seven displayed configurations has nine evaluations per design. Sign-change rate is relative to the clean checkpoint, not agreement with the expected codeword; verification counts are measured with retries enabled.}
+\label{fig:structure}
+\end{figure}
+
+Exact recovery and useful classifier behavior must be interpreted
+separately. For BCE/RS32, 70\% global pruning left mean test accuracy at
+16.48\%, and three-bit per-tensor quantization left 24.41\%, even though
+all three models verified exactly in each condition. At three bits, ordinary
+hard RS decoding corrected 4, 5, and 7 bytes (mean 5.33) with zero erasures;
+the average raw sign-change rate relative to clean scores was 1.11\%.
+At two bits, BCE/RS32 mean accuracy was 9.53\%; one rejected checkpoint
+had 8.58\% accuracy, while the other two were \textsc{Damaged}. These are
+examples of recoverability despite severe utility loss, not evidence that
+classification was preserved.
+
+The RS32 negative-control study comprises 724 extraction cases, including
+600 wrong-key trials, baseline and scrambled checkpoints, unrelated model
+weights, and random initialization. Its largest recorded original-order raw
+agreement was 305/512, below the 358/512 \textsc{Damaged} cutoff. A separate
+set of 54 attacked unmarked-baseline evaluations was also entirely
+\textsc{Rejected}. Across these 778 sampled cases, no \textsc{Verified} or
+\textsc{Damaged} verdict was observed. Several controls reuse checkpoints,
+and the 54 attacked-baseline cases lack the raw-agreement values used in the
+724-case histogram. Zero observed detections is not a population-wide false
+acceptance guarantee.
+
+\begin{figure}[!t]
+\centering\figslot{figures/negative_controls.png}{1.10in}{Histogram of raw agreement for 724 RS32 extraction controls; vertical threshold line at 358/512; observed maximum 305/512.}
+\caption{Measured original-order codeword agreement for 724 RS32 extraction controls. The cutoff is 358 of 512; the 54 separately verified attacked baselines are excluded from the distribution.}
+\label{fig:controls}
+\end{figure}
+
+For context, the archive also contains an exploratory sign-stamping baseline
+in which each RS32 code bit controls the sign of one keyed weight after
+training. Over 36 equally weighted common attack configurations, this
+pipeline yields 26\% exact verification and 61\% exact-or-residual detection,
+compared with 86\% and 99\% for the trained projection pipeline. These are
+\emph{not} matched-sample estimates of an isolated algorithmic improvement:
+the naive version uses two seeds, fewer stochastic draws, and no alignment
+retry, whereas the projection version uses three seeds and can retry.
+
+\section{Discussion and Limitations}
+\label{sec:discussion}
+\subsection{What the Tradeoff Establishes}
+The five paired accuracy runs show a consistent clean-accuracy advantage for
+the implemented hinge objective relative to the BCE/RS32 setting. The three
+same-layer overwrite parents show the converse operational pattern: hinge
+models lose both exact recovery and residual detection under the 512-bit
+attack at a cost within the preset five-point accuracy budget, whereas the BCE
+variants retain residual evidence. The two outcomes therefore pull in opposite
+directions in this setting, and a designer should not assume the two objectives
+are interchangeable. Reporting exact matching, residual statistical agreement,
+and preserved task accuracy separately is more informative than a single
+``robustness'' percentage, because each answers a different question.
+
+The weight-carrier measurements are compatible with an explanation in which
+BCE keeps increasing shared projection magnitude whereas the hinge penalty
+ceases contributing above a target margin. They are not a controlled causal
+experiment. The designs differ in trained margins and carrier statistics;
+RS16 also changes redundancy and codeword length. A conclusive causal
+comparison would match initial margin and watermark strength, attack budgets,
+independent keys, and repeated attacker initialization.
+
+\subsection{Security and Reproducibility Boundaries}
+The external ML-DSA signature authenticates the manifest under standard
+signature assumptions; it neither cryptographically protects the embedding
+channel nor proves model creation or ownership. An adversary who learns the
+watermark key or can query the verifier adaptively is outside the evaluated
+attack model. The signed root covers a reported dataset serialization, not a
+certified training history. The timestamp is developer-supplied and lacks an
+independent priority witness. A trusted auditor must safely manage the
+watermark key and independently authenticate the extraction profile; the
+repository's unsigned sidecars are not a substitute for that trust.
+
+Cover's strict fixed-order sign-count bound and the raw-score binomial tail
+apply to distinct idealized events. Neither is a bound on the deployed,
+target-adaptive assignment plus RS decoder. The 778 clustered negative
+controls support a statement about those samples only. No formal
+post-quantum reduction is supplied for the weight watermark itself.
+
+Finally, this is one 160,234-parameter architecture on one classification
+dataset, with three robustness parent checkpoints per design, one release,
+and one watermark key. The current public checkout lacks the original
+research watermark key, preventing an independent historical alignment-on/off
+replay. The reference implementation and checked-in release signature have
+been exercised by the project's validation suite, but a complete third-party
+reproduction of the historical marked models would need authorized access
+to matching verification material. Larger architectures, multiple releases,
+stronger adaptive overwrites, dummy-neuron insertions, distillation,
+black-box verification, and longer fine-tuning remain open. Independent
+signing-key custody and timestamping would be deployment extensions.
+
+\section{Conclusion}
+\label{sec:conclusion}
+We examined the interaction of post-quantum-signed release metadata and a
+keyed neural-weight watermark as a scoped provenance-association mechanism.
+The main empirical result is an accuracy--overwrite tradeoff: hinge/RS32
+improves clean accuracy by 1.73 points over BCE/RS32 across five paired seeds,
+but in all three tested parent checkpoints it meets the operational removal
+criterion under the specified 512-bit same-layer overwrite (\textsc{Rejected}
+within the five-point utility budget), which no BCE configuration does in the
+tested suite. Exact recovery under selected model transformations and the
+absence of detections in sampled controls provide complementary, limited
+evidence about the implemented verifier. Future evaluation should test
+independent keys and architectures, matched-margin attacks, and stronger
+adaptive and structural adversaries. Keeping signature authentication, model
+association, and proof of ownership distinct is essential when neural
+watermarks are used to interpret signed release records.
+
+% IEEE requires disclosure of AI-generated content. Confirm the precise
+% tool/section description and whether the conference has a separate policy.
+\section*{Acknowledgment and AI-Assistance Disclosure}
+% AUTHOR CHECK: Confirm this acknowledgment with the mentor and coauthors.
+% AUTHOR CHECK: Verify the tool/model names below (e.g., "GPT-6") against
+% what was actually used; they were carried over unchanged from Version 1.
+The authors thank Dr.\ Nivya Muchikel of RV College of Engineering for
+mentorship and project guidance. OpenAI ChatGPT
+(GPT-6) assisted with initial drafting and organization of this manuscript,
+including its abstract, introduction, methods, evaluation, and discussion;
+OpenAI Codex assisted with earlier code and evidence audits, and Anthropic
+Claude assisted with editing earlier manuscript drafts and with the editorial
+revision of this version. The named authors
+are responsible for checking all data, citations, and scientific claims before
+submission.
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+\end{document}
